@@ -258,9 +258,10 @@ pub fn render_flamegraph_svg(
   width~ : Int32 = 1200,
   min_width_px~ : Double = 1.5,
   filter~ : String = "",
+  spec~ : FilterSpec? = None,
 ) -> String raise PprofError {
   let (_, st_name, st_unit) = resolve_sample_type(profile, sample_type~)
-  let stacks = collapse_stacks(profile, sample_type=st_name, filter~)
+  let stacks = collapse_stacks(profile, sample_type=st_name, filter~, spec~)
   let root = build_flame_tree(stacks)
   let depth = tree_depth(root)
   let frame_h = 18.0
@@ -315,6 +316,7 @@ pub fn render_diff_flamegraph_svg(
   min_width_px~ : Double = 1.5,
   normalize~ : Bool = false,
   filter~ : String = "",
+  spec~ : FilterSpec? = None,
 ) -> String raise PprofError {
   let (_, st_name, b_unit) = resolve_sample_type(baseline, sample_type~)
   let (_, _, c_unit) = resolve_sample_type(candidate, sample_type=st_name)
@@ -323,8 +325,18 @@ pub fn render_diff_flamegraph_svg(
       "unit mismatch for sample type '\{st_name}': baseline '\{b_unit}' vs candidate '\{c_unit}'",
     )
   }
-  let base_stacks = collapse_stacks(baseline, sample_type=st_name, filter~)
-  let cand_stacks = collapse_stacks(candidate, sample_type=st_name, filter~)
+  let base_stacks = collapse_stacks(
+    baseline,
+    sample_type=st_name,
+    filter~,
+    spec~,
+  )
+  let cand_stacks = collapse_stacks(
+    candidate,
+    sample_type=st_name,
+    filter~,
+    spec~,
+  )
   let base_root = build_flame_tree(base_stacks)
   let cand_root = build_flame_tree(cand_stacks)
   let base_totals : Map[String, Int64] = Map([])
@@ -431,9 +443,17 @@ pub fn render_top_html(
   title~ : String = "MoonBit pprof Report",
   limit~ : Int32 = 25,
   filter~ : String = "",
+  spec~ : FilterSpec? = None,
 ) -> String raise PprofError {
-  let top = compute_top(profile, sample_type~, sort_by=Flat, limit~, filter~)
-  let svg = render_flamegraph_svg(profile, sample_type~, title~, filter~)
+  let top = compute_top(
+    profile,
+    sample_type~,
+    sort_by=Flat,
+    limit~,
+    filter~,
+    spec~,
+  )
+  let svg = render_flamegraph_svg(profile, sample_type~, title~, filter~, spec~)
   let tbl = StringBuilder()
   tbl.write_string(
     "<h3>Top Functions (\{xml_escape(top.sample_type)} / \{xml_escape(top.unit)})</h3>\n",
@@ -460,6 +480,7 @@ pub fn render_diff_html(
   policy~ : GatePolicy = gate_policy(),
   limit~ : Int32 = 25,
   filter~ : String = "",
+  spec~ : FilterSpec? = None,
 ) -> String raise PprofError {
   let diff = compare_profiles(
     baseline,
@@ -468,6 +489,7 @@ pub fn render_diff_html(
     policy~,
     limit~,
     filter~,
+    spec~,
   )
   let svg = render_diff_flamegraph_svg(
     baseline,
@@ -476,6 +498,7 @@ pub fn render_diff_html(
     title~,
     normalize=policy.normalize,
     filter~,
+    spec~,
   )
   let tbl = StringBuilder()
   let verdict = if diff.gate.passed { "PASS" } else { "REGRESSION DETECTED" }

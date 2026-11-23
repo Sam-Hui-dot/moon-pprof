@@ -7,11 +7,11 @@ import {
 }
 
 // Values
-pub fn collapse_stacks(Profile, sample_type? : String, filter? : String) -> Array[FoldedStack] raise PprofError
+pub fn collapse_stacks(Profile, sample_type? : String, filter? : String, spec? : FilterSpec?) -> Array[FoldedStack] raise PprofError
 
-pub fn compare_profiles(Profile, Profile, sample_type? : String, policy? : GatePolicy, limit? : Int32, filter? : String) -> DiffReport raise PprofError
+pub fn compare_profiles(Profile, Profile, sample_type? : String, policy? : GatePolicy, limit? : Int32, filter? : String, spec? : FilterSpec?) -> DiffReport raise PprofError
 
-pub fn compute_top(Profile, sample_type? : String, sort_by? : SortBy, limit? : Int32, filter? : String) -> TopReport raise PprofError
+pub fn compute_top(Profile, sample_type? : String, sort_by? : SortBy, limit? : Int32, filter? : String, spec? : FilterSpec?) -> TopReport raise PprofError
 
 pub fn decode_profile(Bytes) -> Profile raise PprofError
 
@@ -19,27 +19,37 @@ pub fn encode_profile(Profile, gzip? : Bool) -> Bytes
 
 pub fn error_message(Error) -> String
 
+pub fn filter_spec(focus? : String, ignore_pattern? : String, hide? : String, label_key? : String, label_value? : String) -> FilterSpec
+
 pub fn gate_policy(max_total_regression_pct? : Double?, max_func_cum_regression_pct? : Double?, min_abs_delta? : Int64, normalize? : Bool) -> GatePolicy
+
+pub fn group_by_label(Profile, String, sample_type? : String, spec? : FilterSpec?) -> LabelReport raise PprofError
 
 pub fn gunzip_if_needed(Bytes) -> Bytes raise PprofError
 
 pub fn is_gzip(Bytes) -> Bool
 
-pub fn render_diff_flamegraph_svg(Profile, Profile, sample_type? : String, title? : String, width? : Int32, min_width_px? : Double, normalize? : Bool, filter? : String) -> String raise PprofError
+pub fn merge_profiles(Array[Profile]) -> Profile raise PprofError
 
-pub fn render_diff_html(Profile, Profile, sample_type? : String, title? : String, policy? : GatePolicy, limit? : Int32, filter? : String) -> String raise PprofError
+pub fn render_diff_flamegraph_svg(Profile, Profile, sample_type? : String, title? : String, width? : Int32, min_width_px? : Double, normalize? : Bool, filter? : String, spec? : FilterSpec?) -> String raise PprofError
+
+pub fn render_diff_html(Profile, Profile, sample_type? : String, title? : String, policy? : GatePolicy, limit? : Int32, filter? : String, spec? : FilterSpec?) -> String raise PprofError
 
 pub fn render_diff_markdown(DiffReport) -> String
 
 pub fn render_diff_text(DiffReport) -> String
 
-pub fn render_flamegraph_svg(Profile, sample_type? : String, title? : String, width? : Int32, min_width_px? : Double, filter? : String) -> String raise PprofError
+pub fn render_flamegraph_svg(Profile, sample_type? : String, title? : String, width? : Int32, min_width_px? : Double, filter? : String, spec? : FilterSpec?) -> String raise PprofError
 
 pub fn render_folded(Array[FoldedStack]) -> String
 
 pub fn render_interactive_html(String, String, String) -> String
 
-pub fn render_top_html(Profile, sample_type? : String, title? : String, limit? : Int32, filter? : String) -> String raise PprofError
+pub fn render_label_markdown(LabelReport) -> String
+
+pub fn render_label_text(LabelReport) -> String
+
+pub fn render_top_html(Profile, sample_type? : String, title? : String, limit? : Int32, filter? : String, spec? : FilterSpec?) -> String raise PprofError
 
 pub fn render_top_markdown(TopReport) -> String
 
@@ -102,6 +112,19 @@ pub fn DiffReport::equal(Self, Self) -> Bool
 pub fn DiffReport::not_equal(Self, Self) -> Bool
 pub fn DiffReport::to_json(Self) -> @json.Json
 pub fn DiffReport::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct FilterSpec {
+  focus : String
+  ignore_pattern : String
+  hide : String
+  label_key : String
+  label_value : String
+}
+pub fn FilterSpec::equal(Self, Self) -> Bool
+pub fn FilterSpec::not_equal(Self, Self) -> Bool
+pub fn FilterSpec::to_json(Self) -> @json.Json
+pub fn FilterSpec::to_repr(Self) -> @debug.Repr
 
 #derive(Eq, @debug.Debug, @json.ToJson)
 pub(all) struct FoldedStack {
@@ -174,6 +197,32 @@ pub fn Label::equal(Self, Self) -> Bool
 pub fn Label::not_equal(Self, Self) -> Bool
 pub fn Label::to_json(Self) -> @json.Json
 pub fn Label::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct LabelReport {
+  sample_type : String
+  unit : String
+  label_key : String
+  total : Int64
+  matched_total : Int64
+  groups : Array[LabelStat]
+}
+pub fn LabelReport::equal(Self, Self) -> Bool
+pub fn LabelReport::not_equal(Self, Self) -> Bool
+pub fn LabelReport::to_json(Self) -> @json.Json
+pub fn LabelReport::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct LabelStat {
+  label_value : String
+  value : Int64
+  pct : Double
+  sample_count : Int32
+}
+pub fn LabelStat::equal(Self, Self) -> Bool
+pub fn LabelStat::not_equal(Self, Self) -> Bool
+pub fn LabelStat::to_json(Self) -> @json.Json
+pub fn LabelStat::to_repr(Self) -> @debug.Repr
 
 #derive(Eq, @debug.Debug, @json.ToJson)
 pub(all) struct Line {

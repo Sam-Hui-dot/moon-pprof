@@ -76,7 +76,9 @@ pub fn compare_profiles(
   policy~ : GatePolicy = gate_policy(),
   limit~ : Int32 = 25,
   filter~ : String = "",
+  spec~ : FilterSpec? = None,
 ) -> DiffReport raise PprofError {
+  let effective = resolve_filter(filter, spec)
   let (b_idx, st_name, b_unit) = resolve_sample_type(baseline, sample_type~)
   let (c_idx, _, c_unit) = resolve_sample_type(candidate, sample_type=st_name)
   guard b_unit == c_unit else {
@@ -86,13 +88,13 @@ pub fn compare_profiles(
   }
 
   let (b_total_all, b_shown, b_map) = aggregate_functions(
-    baseline, b_idx, filter,
+    baseline, b_idx, effective,
   )
   let (c_total_all, c_shown, c_map) = aggregate_functions(
-    candidate, c_idx, filter,
+    candidate, c_idx, effective,
   )
-  let b_total = if filter.is_empty() { b_total_all } else { b_shown }
-  let c_total = if filter.is_empty() { c_total_all } else { c_shown }
+  let b_total = if is_filter_empty(effective) { b_total_all } else { b_shown }
+  let c_total = if is_filter_empty(effective) { c_total_all } else { c_shown }
   let delta_total = c_total - b_total
   let delta_total_pct = rel_change_pct(b_total, c_total)
 

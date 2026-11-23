@@ -113,3 +113,39 @@ pub fn render_diff_markdown(report : DiffReport) -> String {
   }
   out.to_string()
 }
+
+///|
+/// Render a `LabelReport` as compact plain text.
+pub fn render_label_text(report : LabelReport) -> String {
+  let out = StringBuilder()
+  out.write_string(
+    "Label: \{report.label_key} | Metric: \{report.sample_type} (\{report.unit}) | Matched: \{report.matched_total}/\{report.total}\n",
+  )
+  out.write_string("value\tpct\tsamples\tlabel_value\n")
+  for g in report.groups {
+    out.write_string(
+      "\{g.value}\t\{g.pct}%\t\{g.sample_count}\t\{g.label_value}\n",
+    )
+  }
+  out.to_string()
+}
+
+///|
+/// Render a `LabelReport` as a GitHub-flavored Markdown table.
+pub fn render_label_markdown(report : LabelReport) -> String {
+  let out = StringBuilder()
+  out.write_string(
+    "# pprof Label Breakdown (`\{md_escape(report.label_key)}`)\n\n",
+  )
+  out.write_string(
+    "- **Metric**: `\{report.sample_type}` (`\{report.unit}`) | **Matched**: `\{report.matched_total}` / `\{report.total}`\n\n",
+  )
+  out.write_string("| Label Value | Value | Share % | Samples |\n")
+  out.write_string("| --- | ---: | ---: | ---: |\n")
+  for g in report.groups {
+    out.write_string(
+      "| `\{md_escape(g.label_value)}` | \{g.value} | \{g.pct}% | \{g.sample_count} |\n",
+    )
+  }
+  out.to_string()
+}

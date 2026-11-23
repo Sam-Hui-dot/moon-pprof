@@ -168,16 +168,133 @@ fn sample_frames_root_to_leaf(
 }
 
 ///|
-fn matches_filter(frames : Array[(String, String)], filter : String) -> Bool {
-  if filter.is_empty() {
+/// Build a `FilterSpec` for `focus`, `ignore`, `hide`, and `Sample.label` slicing.
+pub fn filter_spec(
+  focus~ : String = "",
+  ignore_pattern~ : String = "",
+  hide~ : String = "",
+  label_key~ : String = "",
+  label_value~ : String = "",
+) -> FilterSpec {
+  { focus, ignore_pattern, hide, label_key, label_value, }
+}
+
+///|
+fn is_filter_empty(spec : FilterSpec) -> Bool {
+  spec.focus.is_empty() &&
+  spec.ignore_pattern.is_empty() &&
+  spec.hide.is_empty() &&
+  spec.label_key.is_empty() &&
+  spec.label_value.is_empty()
+}
+
+///|
+fn resolve_filter(filter : String, spec : FilterSpec?) -> FilterSpec {
+  match spec {
+    Some(s) =>
+      if s.focus.is_empty() && !filter.is_empty() {
+        { ..s, focus: filter, }
+      } else {
+        s
+      }
+    None => filter_spec(focus=filter)
+  }
+}
+
+///|
+fn label_display_value(
+  profile : Profile,
+  label : Label,
+) -> String raise PprofError {
+  let s = profile.string_at(label.str_idx)
+  if !s.is_empty() {
+    s
+  } else {
+    let unit = profile.string_at(label.num_unit_idx)
+    if unit.is_empty() {
+      "\{label.num}"
+    } else {
+      "\{label.num}\{unit}"
+    }
+  }
+}
+
+///|
+fn matches_label_filter(
+  profile : Profile,
+  sample : Sample,
+  spec : FilterSpec,
+) -> Bool raise PprofError {
+  if spec.label_key.is_empty() {
     return true
   }
-  for pair in frames {
-    if pair.0.contains(filter) || pair.1.contains(filter) {
-      return true
+  for lbl in sample.labels {
+    let key = profile.string_at(lbl.key_idx)
+    if key == spec.label_key {
+      if spec.label_value.is_empty() {
+        return true
+      }
+      let str_val = profile.string_at(lbl.str_idx)
+      if str_val == spec.label_value ||
+        label_display_value(profile, lbl) == spec.label_value ||
+        "\{lbl.num}" == spec.label_value {
+        return true
+      }
     }
   }
   false
+}
+
+///|
+fn frame_matches(pair : (String, String), pattern : String) -> Bool {
+  pair.0.contains(pattern) || pair.1.contains(pattern)
+}
+
+///|
+/// Apply `label`, `focus`, `ignore_pattern`, and `hide` to a sample's resolved frames.
+fn apply_filter(
+  profile : Profile,
+  sample : Sample,
+  frames : Array[(String, String)],
+  spec : FilterSpec,
+) -> Array[(String, String)]? raise PprofError {
+  if !matches_label_filter(profile, sample, spec) {
+    return None
+  }
+  if !spec.focus.is_empty() {
+    let mut hit = false
+    for pair in frames {
+      if frame_matches(pair, spec.focus) {
+        hit = true
+        break
+      }
+    }
+    if !hit {
+      return None
+    }
+  }
+  if !spec.ignore_pattern.is_empty() {
+    for pair in frames {
+      if frame_matches(pair, spec.ignore_pattern) {
+        return None
+      }
+    }
+  }
+  if spec.hide.is_empty() {
+    Some(frames)
+  } else {
+    let kept : Array[(String, String)] = []
+    for pair in frames {
+      if !frame_matches(pair, spec.hide) {
+        kept.push(pair)
+      }
+    }
+    if kept.is_empty() {
+      None
+    } else {
+      Some(kept)
+    }
+  }
 }
 
 ///|
@@ -191,7 +308,7 @@ priv struct Acc {
 fn aggregate_functions(
   profile : Profile,
   value_index : Int32,
-  filter : String,
+  spec : FilterSpec,
 ) -> (Int64, Int64, Map[String, Acc]) raise PprofError {
   let loc_map = build_location_map(profile)
   let fn_map = build_function_map(profile)
@@ -205,9 +322,12 @@ fn aggregate_functions(
     if v == 0L {
       continue
     }
-    let frames = sample_frames_root_to_leaf(profile, loc_map, fn_map, sample)
-    if !matches_filter(frames, filter) {
-      continue
+    let raw_frames = sample_frames_root_to_leaf(
+      profile, loc_map, fn_map, sample,
+    )
+    let frames = match apply_filter(profile, sample, raw_frames, spec) {
+      Some(kept) => kept
+      None => continue
     }
     shown_total += v
     if frames.is_empty() {
@@ -244,10 +364,14 @@ pub fn compute_top(
   sort_by~ : SortBy = Flat,
   limit~ : Int32 = 20,
   filter~ : String = "",
+  spec~ : FilterSpec? = None,
 ) -> TopReport raise PprofError {
+  let effective = resolve_filter(filter, spec)
   let (idx, st_name, st_unit) = resolve_sample_type(profile, sample_type~)
-  let (total, shown_total, acc_map) = aggregate_functions(profile, idx, filter)
-  let denom = if filter.is_empty() { total } else { shown_total }
+  let (total, shown_total, acc_map) = aggregate_functions(
+    profile, idx, effective,
+  )
+  let denom = if is_filter_empty(effective) { total } else { shown_total }
   let entries : Array[FunctionStat] = []
   for name, acc in acc_map {
     entries.push({
@@ -293,12 +417,89 @@ pub fn compute_top(
 }
 
 ///|
+/// Group profile metric totals by the values of a `Sample.label` key (e.g. `route`, `tenant`).
+pub fn group_by_label(
+  profile : Profile,
+  label_key : String,
+  sample_type~ : String = "",
+  spec~ : FilterSpec? = None,
+) -> LabelReport raise PprofError {
+  guard !label_key.trim().is_empty() else {
+    raise InvalidInput("label_key must be nonempty")
+  }
+  let effective = resolve_filter("", spec)
+  let (idx, st_name, st_unit) = resolve_sample_type(profile, sample_type~)
+  let loc_map = build_location_map(profile)
+  let fn_map = build_function_map(profile)
+  let group_vals : Map[String, Int64] = Map([])
+  let group_counts : Map[String, Int32] = Map([])
+  let mut total = 0L
+  let mut matched_total = 0L
+
+  for sample in profile.samples {
+    let v = sample.values[idx]
+    total += v
+    if v == 0L {
+      continue
+    }
+    let raw_frames = sample_frames_root_to_leaf(
+      profile, loc_map, fn_map, sample,
+    )
+    if apply_filter(profile, sample, raw_frames, effective) is None {
+      continue
+    }
+    let seen_vals : Set[String] = Set([])
+    for lbl in sample.labels {
+      if profile.string_at(lbl.key_idx) == label_key {
+        let lval = label_display_value(profile, lbl)
+        if !seen_vals.contains(lval) {
+          seen_vals.add(lval)
+          group_vals[lval] = group_vals.get(lval).unwrap_or(0L) + v
+          group_counts[lval] = group_counts.get(lval).unwrap_or(0) + 1
+        }
+      }
+    }
+    if !seen_vals.is_empty() {
+      matched_total += v
+    }
+  }
+
+  let groups : Array[LabelStat] = []
+  for lval, val in group_vals {
+    groups.push({
+      label_value: lval,
+      value: val,
+      pct: pct(val, total),
+      sample_count: group_counts.get(lval).unwrap_or(0),
+    })
+  }
+  groups.sort_by((a, b) => {
+    let primary = b.value.compare(a.value)
+    if primary != 0 {
+      primary
+    } else {
+      lex_cmp(a.label_value, b.label_value)
+    }
+  })
+  {
+    sample_type: st_name,
+    unit: st_unit,
+    label_key,
+    total,
+    matched_total,
+    groups,
+  }
+}
+
+///|
 /// Collapse all samples into Brendan Gregg folded call stacks (`root;caller;callee`).
 pub fn collapse_stacks(
   profile : Profile,
   sample_type~ : String = "",
   filter~ : String = "",
+  spec~ : FilterSpec? = None,
 ) -> Array[FoldedStack] raise PprofError {
+  let effective = resolve_filter(filter, spec)
   let (idx, _, _) = resolve_sample_type(profile, sample_type~)
   let loc_map = build_location_map(profile)
   let fn_map = build_function_map(profile)
@@ -308,8 +509,14 @@ pub fn collapse_stacks(
     if v == 0L {
       continue
     }
-    let frames = sample_frames_root_to_leaf(profile, loc_map, fn_map, sample)
-    if frames.is_empty() || !matches_filter(frames, filter) {
+    let raw_frames = sample_frames_root_to_leaf(
+      profile, loc_map, fn_map, sample,
+    )
+    let frames = match apply_filter(profile, sample, raw_frames, effective) {
+      Some(kept) => kept
+      None => continue
+    }
+    if frames.is_empty() {
       continue
     }
     let names = frames.map(p => p.0.replace_all(old=";", new="_"))

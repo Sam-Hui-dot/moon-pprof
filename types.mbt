@@ -354,3 +354,63 @@ pub extend DiffReport with Eq::{not_equal, equal}
 
 ///|
 pub extend DiffReport with @json.ToJson::{to_json}
+
+///|
+/// Stack and sample-label filtering specification (`focus`, `ignore`, `hide`, `label`).
+#derive(Debug, Eq, ToJson)
+pub(all) struct FilterSpec {
+  focus : String
+  ignore_pattern : String
+  hide : String
+  label_key : String
+  label_value : String
+}
+
+///|
+pub extend FilterSpec with @debug.Debug::{to_repr}
+
+///|
+pub extend FilterSpec with Eq::{not_equal, equal}
+
+///|
+pub extend FilterSpec with @json.ToJson::{to_json}
+
+///|
+/// Aggregated metric total for one value of a `Sample.label` key.
+#derive(Debug, Eq, ToJson)
+pub(all) struct LabelStat {
+  label_value : String
+  value : Int64
+  pct : Double
+  sample_count : Int32
+}
+
+///|
+pub extend LabelStat with @debug.Debug::{to_repr}
+
+///|
+pub extend LabelStat with Eq::{not_equal, equal}
+
+///|
+pub extend LabelStat with @json.ToJson::{to_json}
+
+///|
+/// Grouped breakdown of a profile by a `Sample.label` key (e.g. HTTP route or tenant).
+#derive(Debug, Eq, ToJson)
+pub(all) struct LabelReport {
+  sample_type : String
+  unit : String
+  label_key : String
+  total : Int64
+  matched_total : Int64
+  groups : Array[LabelStat]
+}
+
+///|
+pub extend LabelReport with @debug.Debug::{to_repr}
+
+///|
+pub extend LabelReport with Eq::{not_equal, equal}
+
+///|
+pub extend LabelReport with @json.ToJson::{to_json}

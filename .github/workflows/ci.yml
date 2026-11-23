@@ -1,0 +1,98 @@
+name: CI
+
+on: [push, pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      MOON_WORK: 'off'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install MoonBit toolchain
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+      - name: Format, multi-target check, unit tests, and Wasm build
+        run: |
+          moon version --all
+          moon update
+          moon fmt --check
+          for target in wasm wasm-gc js native; do
+            echo "=== target: $target ==="
+            moon check --target "$target" --deny-warn
+            moon test --target "$target" --deny-warn
+          done
+          moon build --target wasm
+      - name: Verify root library from an independent consumer module
+        run: |
+          WS="$RUNNER_TEMP/moon-pprof-consumer"
+          mkdir -p "$WS/library" "$WS/consumer"
+          cp moon.mod moon.pkg types.mbt wire.mbt decoder.mbt analysis.mbt diff.mbt flamegraph.mbt report.mbt "$WS/library/"
+          printf 'members = ["library", "consumer"]\n' > "$WS/moon.work"
+          cat > "$WS/consumer/moon.mod" << 'EOF'
+          name = "consumer/pprof-check"
+          version = "0.1.0"
+
+          import {
+            "Sam-Hui-dot/moon-pprof@0.1.0",
+          }
+          EOF
+          cat > "$WS/consumer/moon.pkg" << 'EOF'
+          import {
+            "Sam-Hui-dot/moon-pprof" @pprof,
+          }
+          pkgtype(kind: "executable")
+          EOF
+          cat > "$WS/consumer/main.mbt" << 'EOF'
+          fn main raise {
+            let p : @pprof.Profile = {
+              sample_types: [{ type_idx: 1L, unit_idx: 2L }],
+              samples: [{ location_ids: [1UL], values: [100L], labels: [] }],
+              mappings: [],
+              locations: [{ id: 1UL, mapping_id: 0UL, address: 0x100UL, lines: [{ function_id: 1UL, line: 1L }], is_folded: false }],
+              functions: [{ id: 1UL, name_idx: 3L, system_name_idx: 3L, filename_idx: 0L, start_line: 1L }],
+              string_table: ["", "cpu", "nanoseconds", "demo.work"],
+              drop_frames: 0L,
+              keep_frames: 0L,
+              time_nanos: 0L,
+              duration_nanos: 0L,
+              period_type: None,
+              period: 0L,
+              comments: [],
+              default_sample_type: 1L,
+            }
+            let gz = @pprof.encode_profile(p, gzip=true)
+            let decoded = @pprof.decode_profile(gz)
+            let top = @pprof.compute_top(decoded)
+            guard top.total == 100L && top.entries.length() == 1 else {
+              abort("unexpected top report")
+            }
+            let svg = @pprof.render_flamegraph_svg(decoded)
+            guard svg.contains("demo.work") else {
+              abort("unexpected svg")
+            }
+            println("consumer: ok")
+          }
+          EOF
+          MOON_WORK="" moon -C "$WS/consumer" run --target js --deny-warn .
+          MOON_WORK="" moon -C "$WS/consumer" run --target wasm --deny-warn .
+      - name: Cross-check against official go tool pprof and publish Step Summary
+        run: |
+          python3 demo/verify_oracle.py
+          cat demo/out/diff-report.md >> "$GITHUB_STEP_SUMMARY"

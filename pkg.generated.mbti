@@ -1,0 +1,289 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "Sam-Hui-dot/moon-pprof"
+
+import {
+  "moonbitlang/core/debug",
+  "moonbitlang/core/json",
+}
+
+// Values
+pub fn collapse_stacks(Profile, sample_type? : String, filter? : String) -> Array[FoldedStack] raise PprofError
+
+pub fn compare_profiles(Profile, Profile, sample_type? : String, policy? : GatePolicy, limit? : Int32, filter? : String) -> DiffReport raise PprofError
+
+pub fn compute_top(Profile, sample_type? : String, sort_by? : SortBy, limit? : Int32, filter? : String) -> TopReport raise PprofError
+
+pub fn decode_profile(Bytes) -> Profile raise PprofError
+
+pub fn encode_profile(Profile, gzip? : Bool) -> Bytes
+
+pub fn error_message(Error) -> String
+
+pub fn gate_policy(max_total_regression_pct? : Double?, max_func_cum_regression_pct? : Double?, min_abs_delta? : Int64, normalize? : Bool) -> GatePolicy
+
+pub fn gunzip_if_needed(Bytes) -> Bytes raise PprofError
+
+pub fn is_gzip(Bytes) -> Bool
+
+pub fn render_diff_flamegraph_svg(Profile, Profile, sample_type? : String, title? : String, width? : Int32, min_width_px? : Double, normalize? : Bool, filter? : String) -> String raise PprofError
+
+pub fn render_diff_html(Profile, Profile, sample_type? : String, title? : String, policy? : GatePolicy, limit? : Int32, filter? : String) -> String raise PprofError
+
+pub fn render_diff_markdown(DiffReport) -> String
+
+pub fn render_diff_text(DiffReport) -> String
+
+pub fn render_flamegraph_svg(Profile, sample_type? : String, title? : String, width? : Int32, min_width_px? : Double, filter? : String) -> String raise PprofError
+
+pub fn render_folded(Array[FoldedStack]) -> String
+
+pub fn render_interactive_html(String, String, String) -> String
+
+pub fn render_top_html(Profile, sample_type? : String, title? : String, limit? : Int32, filter? : String) -> String raise PprofError
+
+pub fn render_top_markdown(TopReport) -> String
+
+pub fn render_top_text(TopReport) -> String
+
+pub fn resolve_sample_type(Profile, sample_type? : String) -> (Int32, String, String) raise PprofError
+
+pub fn sample_type_names(Profile) -> Array[(String, String)] raise PprofError
+
+pub fn validate_profile(Profile) -> Unit raise PprofError
+
+// Errors
+#derive(Eq, @debug.Debug)
+pub(all) suberror PprofError {
+  InvalidGzip(String)
+  InvalidProtobuf(String)
+  InvalidProfile(String)
+  InvalidInput(String)
+}
+pub fn PprofError::equal(Self, Self) -> Bool
+pub fn PprofError::not_equal(Self, Self) -> Bool
+pub fn PprofError::to_repr(Self) -> @debug.Repr
+
+// Types and methods
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct DiffEntry {
+  name : String
+  filename : String
+  baseline_flat : Int64
+  candidate_flat : Int64
+  delta_flat : Int64
+  delta_flat_pct : Double
+  baseline_cum : Int64
+  candidate_cum : Int64
+  delta_cum : Int64
+  delta_cum_pct : Double
+  baseline_cum_share_pct : Double
+  candidate_cum_share_pct : Double
+  delta_cum_share_pp : Double
+  classification : String
+}
+pub fn DiffEntry::equal(Self, Self) -> Bool
+pub fn DiffEntry::not_equal(Self, Self) -> Bool
+pub fn DiffEntry::to_json(Self) -> @json.Json
+pub fn DiffEntry::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct DiffReport {
+  sample_type : String
+  unit : String
+  normalized : Bool
+  baseline_total : Int64
+  candidate_total : Int64
+  delta_total : Int64
+  delta_total_pct : Double
+  entries : Array[DiffEntry]
+  gate : GateResult
+}
+pub fn DiffReport::equal(Self, Self) -> Bool
+pub fn DiffReport::not_equal(Self, Self) -> Bool
+pub fn DiffReport::to_json(Self) -> @json.Json
+pub fn DiffReport::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct FoldedStack {
+  stack : String
+  value : Int64
+}
+pub fn FoldedStack::equal(Self, Self) -> Bool
+pub fn FoldedStack::not_equal(Self, Self) -> Bool
+pub fn FoldedStack::to_json(Self) -> @json.Json
+pub fn FoldedStack::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct Function {
+  id : UInt64
+  name_idx : Int64
+  system_name_idx : Int64
+  filename_idx : Int64
+  start_line : Int64
+}
+pub fn Function::equal(Self, Self) -> Bool
+pub fn Function::not_equal(Self, Self) -> Bool
+pub fn Function::to_json(Self) -> @json.Json
+pub fn Function::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct FunctionStat {
+  name : String
+  filename : String
+  flat : Int64
+  flat_pct : Double
+  cum : Int64
+  cum_pct : Double
+}
+pub fn FunctionStat::equal(Self, Self) -> Bool
+pub fn FunctionStat::not_equal(Self, Self) -> Bool
+pub fn FunctionStat::to_json(Self) -> @json.Json
+pub fn FunctionStat::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct GatePolicy {
+  max_total_regression_pct : Double?
+  max_func_cum_regression_pct : Double?
+  min_abs_delta : Int64
+  normalize : Bool
+}
+pub fn GatePolicy::equal(Self, Self) -> Bool
+pub fn GatePolicy::not_equal(Self, Self) -> Bool
+pub fn GatePolicy::to_json(Self) -> @json.Json
+pub fn GatePolicy::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct GateResult {
+  passed : Bool
+  exit_code : Int32
+  violations : Array[String]
+}
+pub fn GateResult::equal(Self, Self) -> Bool
+pub fn GateResult::not_equal(Self, Self) -> Bool
+pub fn GateResult::to_json(Self) -> @json.Json
+pub fn GateResult::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct Label {
+  key_idx : Int64
+  str_idx : Int64
+  num : Int64
+  num_unit_idx : Int64
+}
+pub fn Label::equal(Self, Self) -> Bool
+pub fn Label::not_equal(Self, Self) -> Bool
+pub fn Label::to_json(Self) -> @json.Json
+pub fn Label::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct Line {
+  function_id : UInt64
+  line : Int64
+}
+pub fn Line::equal(Self, Self) -> Bool
+pub fn Line::not_equal(Self, Self) -> Bool
+pub fn Line::to_json(Self) -> @json.Json
+pub fn Line::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct Location {
+  id : UInt64
+  mapping_id : UInt64
+  address : UInt64
+  lines : Array[Line]
+  is_folded : Bool
+}
+pub fn Location::equal(Self, Self) -> Bool
+pub fn Location::not_equal(Self, Self) -> Bool
+pub fn Location::to_json(Self) -> @json.Json
+pub fn Location::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct Mapping {
+  id : UInt64
+  memory_start : UInt64
+  memory_limit : UInt64
+  file_offset : UInt64
+  filename_idx : Int64
+  build_id_idx : Int64
+  has_functions : Bool
+  has_filenames : Bool
+  has_line_numbers : Bool
+  has_inline_frames : Bool
+}
+pub fn Mapping::equal(Self, Self) -> Bool
+pub fn Mapping::not_equal(Self, Self) -> Bool
+pub fn Mapping::to_json(Self) -> @json.Json
+pub fn Mapping::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct Profile {
+  sample_types : Array[ValueType]
+  samples : Array[Sample]
+  mappings : Array[Mapping]
+  locations : Array[Location]
+  functions : Array[Function]
+  string_table : Array[String]
+  drop_frames : Int64
+  keep_frames : Int64
+  time_nanos : Int64
+  duration_nanos : Int64
+  period_type : ValueType?
+  period : Int64
+  comments : Array[Int64]
+  default_sample_type : Int64
+}
+pub fn Profile::equal(Self, Self) -> Bool
+pub fn Profile::not_equal(Self, Self) -> Bool
+pub fn Profile::string_at(Self, Int64) -> String raise PprofError
+pub fn Profile::to_json(Self) -> @json.Json
+pub fn Profile::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct Sample {
+  location_ids : Array[UInt64]
+  values : Array[Int64]
+  labels : Array[Label]
+}
+pub fn Sample::equal(Self, Self) -> Bool
+pub fn Sample::not_equal(Self, Self) -> Bool
+pub fn Sample::to_json(Self) -> @json.Json
+pub fn Sample::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug)
+pub(all) enum SortBy {
+  Flat
+  Cum
+}
+pub fn SortBy::equal(Self, Self) -> Bool
+pub fn SortBy::not_equal(Self, Self) -> Bool
+pub fn SortBy::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct TopReport {
+  sample_type : String
+  unit : String
+  total : Int64
+  shown_total : Int64
+  sample_count : Int32
+  duration_nanos : Int64
+  entries : Array[FunctionStat]
+}
+pub fn TopReport::equal(Self, Self) -> Bool
+pub fn TopReport::not_equal(Self, Self) -> Bool
+pub fn TopReport::to_json(Self) -> @json.Json
+pub fn TopReport::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct ValueType {
+  type_idx : Int64
+  unit_idx : Int64
+}
+pub fn ValueType::equal(Self, Self) -> Bool
+pub fn ValueType::not_equal(Self, Self) -> Bool
+pub fn ValueType::to_json(Self) -> @json.Json
+pub fn ValueType::to_repr(Self) -> @debug.Repr
+
+// Type aliases
+
+// Traits

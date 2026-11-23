@@ -43,14 +43,14 @@ jobs:
         run: |
           WS="$RUNNER_TEMP/moon-pprof-consumer"
           mkdir -p "$WS/library" "$WS/consumer"
-          cp moon.mod moon.pkg types.mbt wire.mbt decoder.mbt analysis.mbt diff.mbt flamegraph.mbt report.mbt "$WS/library/"
+          cp moon.mod moon.pkg types.mbt wire.mbt decoder.mbt merge.mbt analysis.mbt diff.mbt flamegraph.mbt report.mbt "$WS/library/"
           printf 'members = ["library", "consumer"]\n' > "$WS/moon.work"
           cat > "$WS/consumer/moon.mod" << 'EOF'
           name = "consumer/pprof-check"
           version = "0.1.0"
 
           import {
-            "Sam-Hui-dot/moon-pprof@0.1.0",
+            "Sam-Hui-dot/moon-pprof@0.2.0",
           }
           EOF
           cat > "$WS/consumer/moon.pkg" << 'EOF'

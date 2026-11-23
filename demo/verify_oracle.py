@@ -1,8 +1,7 @@
-"""Cross-check moon-pprof against official `go tool pprof` on real Go .pb.gz profiles."""
+"""Cross-check moon-pprof against official `go tool pprof` on real Go CPU, Heap, and merged .pb.gz profiles."""
 import json
 import re
 import subprocess
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -18,52 +17,61 @@ def run(cmd, cwd=ROOT, check=True):
     return res
 
 
-def parse_go_pprof_top_ns(pprof_path: Path):
-    # `go tool pprof -top -nodecount=100 -unit=ns` prints exact nanoseconds (with optional 'ns' suffix).
-    res = run(["go", "tool", "pprof", "-top", "-nodecount=100", "-unit=ns", str(pprof_path)])
+def to_base_unit(val: float, unit: str) -> int:
+    mult = {
+        "ns": 1,
+        "us": 1_000,
+        "ms": 1_000_000,
+        "s": 1_000_000_000,
+        "B": 1,
+        "kB": 1024,
+        "MB": 1024 * 1024,
+        "GB": 1024 * 1024 * 1024,
+        "": 1,
+    }[unit]
+    return int(round(val * mult))
+
+
+def parse_go_pprof_top(pprof_path: Path, sample_index: str | None = None, unit_flag: str = "ns"):
+    cmd = ["go", "tool", "pprof", "-top", "-nodecount=100", f"-unit={unit_flag}"]
+    if sample_index:
+        cmd.append(f"-sample_index={sample_index}")
+    cmd.append(str(pprof_path))
+    res = run(cmd)
     total = None
     rows = {}
     for line in res.stdout.splitlines():
-        m_tot = re.search(r"Showing top .*? of (\d+)ns total", line)
+        m_tot = re.search(r"Showing .*? of ([\d.]+)(ns|us|ms|s|B|kB|MB|GB)? total", line)
         if m_tot:
-            total = int(m_tot.group(1))
+            total = to_base_unit(float(m_tot.group(1)), m_tot.group(2) or "")
             continue
-        # Format: flat  flat%  sum%  cum  cum%  Name
         m = re.match(
-            r"^\s*(\d+(?:\.\d+)?)(ns|us|ms|s)?\s+[\d.]+%\s+[\d.]+%\s+(\d+(?:\.\d+)?)(ns|us|ms|s)?\s+[\d.]+%\s+(.+?)\s*$",
+            r"^\s*(\d+(?:\.\d+)?)(ns|us|ms|s|B|kB|MB|GB)?\s+[\d.]+%\s+[\d.]+%\s+(\d+(?:\.\d+)?)(ns|us|ms|s|B|kB|MB|GB)?\s+[\d.]+%\s+(.+?)\s*$",
             line,
         )
         if m:
-            flat_val = to_ns(float(m.group(1)), m.group(2) or "ns")
-            cum_val = to_ns(float(m.group(3)), m.group(4) or "ns")
+            flat_val = to_base_unit(float(m.group(1)), m.group(2) or "")
+            cum_val = to_base_unit(float(m.group(3)), m.group(4) or "")
             name = m.group(5).strip()
             if name.endswith("(inline)"):
                 name = name[: -len("(inline)")].strip()
             rows[name] = (flat_val, cum_val)
-    if total is None:
-        # Handle zero-prefix or scaled total line
-        m_tot2 = re.search(r"Showing .*? of ([\d.]+)(ns|us|ms|s) total", res.stdout)
-        if m_tot2:
-            total = to_ns(float(m_tot2.group(1)), m_tot2.group(2))
     assert total is not None and total > 0, f"Could not parse total from go tool pprof:\n{res.stdout}"
     return total, rows
-
-
-def to_ns(val: float, unit: str) -> int:
-    mult = {"ns": 1, "us": 1_000, "ms": 1_000_000, "s": 1_000_000_000}[unit]
-    return int(round(val * mult))
 
 
 def run_moon_pprof(args, check=True):
     return run(["moon", "run", "--target", "wasm", "cmd/main", "--", *args], check=check)
 
 
-def verify_single(pprof_path: Path):
-    go_total, go_rows = parse_go_pprof_top_ns(pprof_path)
-    res = run_moon_pprof(["top", str(pprof_path), "--limit", "100", "--format", "json"])
+def verify_single(pprof_path: Path, sample_type: str | None = None, unit_flag: str = "ns", expected_type: str = "cpu"):
+    go_total, go_rows = parse_go_pprof_top(pprof_path, sample_index=sample_type, unit_flag=unit_flag)
+    cli_args = ["top", str(pprof_path), "--limit", "100", "--format", "json"]
+    if sample_type:
+        cli_args.extend(["--sample-type", sample_type])
+    res = run_moon_pprof(cli_args)
     report = json.loads(res.stdout.strip().splitlines()[-1])
-    assert report["sample_type"] == "cpu", report
-    assert report["unit"] == "nanoseconds", report
+    assert report["sample_type"] == expected_type, report
     assert int(report["total"]) == go_total, f"total mismatch: moon={report['total']} go={go_total}"
 
     moon_rows = {e["name"]: (int(e["flat"]), int(e["cum"])) for e in report["entries"]}
@@ -72,11 +80,31 @@ def verify_single(pprof_path: Path):
         if fn_name in moon_rows:
             m_flat, m_cum = moon_rows[fn_name]
             assert m_flat == g_flat and m_cum == g_cum, (
-                f"{pprof_path.name} mismatch on {fn_name}: moon=({m_flat},{m_cum}) vs go=({g_flat},{g_cum})"
+                f"{pprof_path.name} ({expected_type}) mismatch on {fn_name}: moon=({m_flat},{m_cum}) vs go=({g_flat},{g_cum})"
             )
             checked += 1
     assert checked >= 3, f"Expected at least 3 matched Go functions, got {checked}"
-    print(f"[ORACLE OK] {pprof_path.name}: total={go_total}ns, exact 0-error match on {checked} functions")
+    print(f"[ORACLE OK] {pprof_path.name} ({expected_type}): total={go_total}{unit_flag}, exact 0-error match on {checked} functions")
+
+
+def verify_merge_oracle(base_path: Path, cand_path: Path):
+    moon_merged = OUT / "moon-merged-cpu.pb.gz"
+    go_merged = OUT / "go-merged-cpu.pb.gz"
+    run_moon_pprof(["merge", str(base_path), str(cand_path), "--out", str(moon_merged)])
+    run(["go", "tool", "pprof", "-proto", f"-output={go_merged}", str(base_path), str(cand_path)])
+
+    go_total, go_rows = parse_go_pprof_top(go_merged, unit_flag="ns")
+    res = run_moon_pprof(["top", str(moon_merged), "--limit", "100", "--format", "json"])
+    report = json.loads(res.stdout.strip().splitlines()[-1])
+    assert int(report["total"]) == go_total, f"merge total mismatch: moon={report['total']} go={go_total}"
+    moon_rows = {e["name"]: (int(e["flat"]), int(e["cum"])) for e in report["entries"]}
+    checked = 0
+    for fn_name, (g_flat, g_cum) in go_rows.items():
+        if fn_name in moon_rows:
+            assert moon_rows[fn_name] == (g_flat, g_cum), f"merge mismatch on {fn_name}"
+            checked += 1
+    assert checked >= 4
+    print(f"[MERGE ORACLE OK] merged total={go_total}ns, exact 0-error match on {checked} functions against `go tool pprof -proto`")
 
 
 def verify_diff(base_path: Path, cand_path: Path):
@@ -88,6 +116,8 @@ def verify_diff(base_path: Path, cand_path: Path):
             "diff",
             str(base_path),
             str(cand_path),
+            "--hide",
+            "runtime.",
             "--max-total-pct",
             "15",
             "--max-func-pct",
@@ -104,12 +134,13 @@ def verify_diff(base_path: Path, cand_path: Path):
     assert res.returncode == 1, f"Expected CI regression exit code 1, got {res.returncode}\n{res.stdout}\n{res.stderr}"
     report = json.loads(res.stdout.strip().splitlines()[-1])
     assert report["gate"]["passed"] is False
+    # Verify --hide runtime. removed runtime frames from diff entries
+    assert all("runtime." not in e["name"] for e in report["entries"]), report["entries"]
     slow = [e for e in report["entries"] if "slowRegressionLoop" in e["name"]]
     assert slow and slow[0]["classification"] == "regressed", f"Expected slowRegressionLoop regressed: {report['entries']}"
     assert fg_svg.exists() and "Regressed (slower/larger)" in fg_svg.read_text(encoding="utf-8")
     assert diff_html.exists() and "slowRegressionLoop" in diff_html.read_text(encoding="utf-8")
 
-    # Also verify Markdown output for CI Step Summary
     res_md = run_moon_pprof(
         ["diff", str(base_path), str(cand_path), "--max-total-pct", "15", "--format", "md", "--out", str(diff_md)],
         check=False,
@@ -122,13 +153,19 @@ def verify_diff(base_path: Path, cand_path: Path):
 
 
 def main():
-    base = FIXTURES / "baseline-cpu.pb.gz"
-    cand = FIXTURES / "candidate-cpu.pb.gz"
-    if not base.exists() or not cand.exists():
-        raise SystemExit(f"Missing fixtures in {FIXTURES}; run `go run demo/gen_go_profiles.go` first.")
-    verify_single(base)
-    verify_single(cand)
-    verify_diff(base, cand)
+    base_cpu = FIXTURES / "baseline-cpu.pb.gz"
+    cand_cpu = FIXTURES / "candidate-cpu.pb.gz"
+    base_heap = FIXTURES / "baseline-heap.pb.gz"
+    cand_heap = FIXTURES / "candidate-heap.pb.gz"
+    for p in (base_cpu, cand_cpu, base_heap, cand_heap):
+        if not p.exists():
+            raise SystemExit(f"Missing fixture {p}; run `go run demo/gen_go_profiles.go` first.")
+    verify_single(base_cpu, expected_type="cpu", unit_flag="ns")
+    verify_single(cand_cpu, expected_type="cpu", unit_flag="ns")
+    verify_single(base_heap, sample_type="alloc_space", expected_type="alloc_space", unit_flag="B")
+    verify_single(cand_heap, sample_type="alloc_space", expected_type="alloc_space", unit_flag="B")
+    verify_merge_oracle(base_cpu, cand_cpu)
+    verify_diff(base_cpu, cand_cpu)
 
 
 if __name__ == "__main__":

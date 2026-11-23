@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/pprof"
 )
 
@@ -42,7 +43,29 @@ func runWorkload(regressed bool) uint64 {
 	return sink
 }
 
-func capture(path string, regressed bool) error {
+//go:noinline
+func allocBaselineChunk(count int) [][]byte {
+	out := make([][]byte, 0, count)
+	for i := 0; i < count; i++ {
+		buf := make([]byte, 4096)
+		buf[0] = byte(i)
+		out = append(out, buf)
+	}
+	return out
+}
+
+//go:noinline
+func allocRegressedChunk(count int) [][]byte {
+	out := make([][]byte, 0, count)
+	for i := 0; i < count; i++ {
+		buf := make([]byte, 16384)
+		buf[0] = byte(i)
+		out = append(out, buf)
+	}
+	return out
+}
+
+func captureCPU(path string, regressed bool) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -60,15 +83,50 @@ func capture(path string, regressed bool) error {
 	return nil
 }
 
+func captureHeap(path string, regressed bool) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	oldRate := runtime.MemProfileRate
+	runtime.MemProfileRate = 1
+	defer func() { runtime.MemProfileRate = oldRate }()
+
+	keepA := allocBaselineChunk(64)
+	var keepB [][]byte
+	if regressed {
+		keepB = allocRegressedChunk(128)
+	} else {
+		keepB = allocRegressedChunk(16)
+	}
+	runtime.GC()
+
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := pprof.WriteHeapProfile(f); err != nil {
+		return err
+	}
+	fmt.Printf("captured %s (chunks=%d+%d)\n", path, len(keepA), len(keepB))
+	return nil
+}
+
 func main() {
 	outDir := "demo/fixtures"
 	if len(os.Args) > 1 {
 		outDir = os.Args[1]
 	}
-	if err := capture(filepath.Join(outDir, "baseline-cpu.pb.gz"), false); err != nil {
+	if err := captureCPU(filepath.Join(outDir, "baseline-cpu.pb.gz"), false); err != nil {
 		panic(err)
 	}
-	if err := capture(filepath.Join(outDir, "candidate-cpu.pb.gz"), true); err != nil {
+	if err := captureCPU(filepath.Join(outDir, "candidate-cpu.pb.gz"), true); err != nil {
+		panic(err)
+	}
+	if err := captureHeap(filepath.Join(outDir, "baseline-heap.pb.gz"), false); err != nil {
+		panic(err)
+	}
+	if err := captureHeap(filepath.Join(outDir, "candidate-heap.pb.gz"), true); err != nil {
 		panic(err)
 	}
 }

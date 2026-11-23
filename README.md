@@ -8,6 +8,8 @@
 
 - **原生 `profile.proto` 编解码与 Gzip 自动解包**：零外部 C 绑定实现 Protobuf Wire Format（varint / length-delimited / packed repeated / 未知字段安全跳过），通过 `moonbit-community/flate/gzip` 自动解包 `.pb.gz`，并支持 `encode_profile` 编码与全链路 round-trip 校验。
 - **与 `go tool pprof` 对齐的聚合语义**：正确按 leaf-first 顺序展开内联帧（`Location.lines`），在计算 `cum` 时对递归栈帧去重避免重复计入，支持多指标（`cpu` / `samples` / `alloc_space` 等）与 `default_sample_type` 解析。
+- **多文件合并（`merge`）**：支持将多台机器/多时间窗口采集的 `.pb.gz` 按字符串表重映射、函数/位置去重、样本累加合并为规范 `.pb.gz`，与官方 `go tool pprof -proto` 0 误差一致。
+- **标签切片与噪音过滤**：支持按 `Sample.label`（如 HTTP 路由/租户/Goroutine 标签）分组汇总（`labels`）与定向过滤，并提供 `--focus` / `--ignore` / `--hide` 规则以屏蔽 `runtime.*` 等底层噪音栈帧。
 - **A/B 性能差分与 CI 回归门禁**：对比基线与候选两份 profile，支持绝对差分与占比归一化（`--normalize`），自动标记 `regressed` / `improved` / `added` / `removed` / `unchanged`，按总回归比例与单函数阈值返回退出码（`0` 通过、`1` 回归拦截、`2` 输入或解析错误）。
 - **交互式火焰图与差异火焰图（SVG / 离线 HTML）**：
   - 单文件火焰图：暖色系前缀合并树，悬停显示完整函数名、`cum`、`flat` 与占比。
@@ -19,7 +21,7 @@
 ### 1. 作为 MoonBit 核心库导入（支持 Wasm / WasmGC / JS / Native）
 
 ```powershell
-moon add Sam-Hui-dot/moon-pprof@0.1.0
+moon add Sam-Hui-dot/moon-pprof@0.2.0
 ```
 
 ```moonbit
@@ -46,8 +48,14 @@ moon run cmd/main --target wasm -- folded demo/fixtures/baseline-cpu.pb.gz
 # 生成单文件交互式 HTML 火焰图
 moon run cmd/main --target wasm -- flamegraph demo/fixtures/baseline-cpu.pb.gz --html --out demo/out/baseline.html
 
-# A/B 性能回归门禁 + 红蓝差异火焰图 SVG + 离线交互 HTML 报告
-moon run cmd/main --target wasm -- diff demo/fixtures/baseline-cpu.pb.gz demo/fixtures/candidate-cpu.pb.gz --max-total-pct 15 --max-func-pct 25 --format md --flamegraph-out demo/out/diff.svg --html-out demo/out/diff.html
+# A/B 性能回归门禁 + 屏蔽 runtime 噪音 + 红蓝差异火焰图 SVG + 离线交互 HTML 报告
+moon run cmd/main --target wasm -- diff demo/fixtures/baseline-cpu.pb.gz demo/fixtures/candidate-cpu.pb.gz --hide runtime. --max-total-pct 15 --max-func-pct 25 --format md --flamegraph-out demo/out/diff.svg --html-out demo/out/diff.html
+
+# 合并多份剖析文件为规范 .pb.gz（对齐 go tool pprof -proto）
+moon run cmd/main --target wasm -- merge demo/fixtures/baseline-cpu.pb.gz demo/fixtures/candidate-cpu.pb.gz --out demo/out/merged.pb.gz
+
+# 按 Sample.label 标签分组统计（例如 route / tenant）
+moon run cmd/main --target wasm -- labels demo/fixtures/baseline-cpu.pb.gz --key route --format md
 ```
 
 ## 与官方 `go tool pprof` 的精确对拍
@@ -66,8 +74,10 @@ python demo/verify_oracle.py
 ```
 
 实测结果：
-- `baseline-cpu.pb.gz`（`180,000,000 ns`）与 `candidate-cpu.pb.gz`（`490,000,000 ns`）的 `total` 以及全部 6 个函数的 `flat` / `cum` 数值与 `go tool pprof -top -unit=ns` **0 误差完全一致**。
-- `diff` 命令准确检出退化函数 `main.slowRegressionLoop`（`50,000,000 ns` → `350,000,000 ns`，`+600%`，占比 `+43.65pp`），返回退出码 `1`，并生成差异火焰图 SVG、离线 HTML 与 Markdown 汇总表。
+- **CPU 对拍**：`baseline-cpu.pb.gz`（`180,000,000 ns`）与 `candidate-cpu.pb.gz`（`490,000,000 ns`）全部 6 个函数的 `flat` / `cum` 与 `go tool pprof -top -unit=ns` **0 误差一致**。
+- **Heap 内存对拍**：`baseline-heap.pb.gz`（`alloc_space` `3,247,944 B`，22 个函数）与 `candidate-heap.pb.gz`（`alloc_space` `6,543,480 B`，25 个函数）与 `go tool pprof -top -sample_index=alloc_space -unit=B` **逐字节 0 误差一致**。
+- **多文件合并对拍**：`moon-pprof merge` 合并两份 CPU 样本（`670,000,000 ns`）与 `go tool pprof -proto` **0 误差一致**。
+- **差分门禁与过滤**：`diff --hide runtime.` 准确屏蔽运行时帧并检出退化函数 `main.slowRegressionLoop`，返回退出码 `1`，生成差异火焰图 SVG、离线 HTML 与 Markdown 汇总表。
 
 ## 与 MoonBit 现有生态的互补关系
 

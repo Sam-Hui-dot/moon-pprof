@@ -380,9 +380,16 @@ async fn main {
     println(usage)
     return
   }
-  let exit_code = run(args[1:].to_owned()) catch {
-    error => {
-      println(@moon-pprof.error_message(error))
+  let exit_code = match
+    (@async.with_timeout_opt(60_000, () => run(args[1:].to_owned())) catch {
+      error => {
+        println(@moon-pprof.error_message(error))
+        Some(2)
+      }
+    }) {
+    Some(code) => code
+    None => {
+      println("operation timed out after 60s")
       2
     }
   }

@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>moon-pprof — Zero-Upload Browser pprof Analyzer (Powered by MoonBit)</title>
+<style>
+  :root { --bg:#f4f5f7; --card:#ffffff; --border:#e5e7eb; --text:#111827; --muted:#4b5563; --accent:#111827; --reg:#b91c1c; --imp:#1d4ed8; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:20px; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text); }
+  .wrap { max-width:1360px; margin:0 auto; }
+  header { display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:12px; margin-bottom:16px; }
+  h1 { margin:0; font-size:22px; }
+  .sub { font-size:13px; color:var(--muted); margin-top:4px; }
+  .pill { display:inline-block; padding:3px 9px; border-radius:999px; font-size:11px; font-weight:600; background:#ecfdf5; color:#065f46; border:1px solid #a7f3d0; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; margin-bottom:16px; box-shadow:0 1px 2px rgba(0,0,0,0.03); }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media (max-width:780px){ .grid2 { grid-template-columns:1fr; } }
+  .drop { border:2px dashed #cbd5e1; border-radius:8px; padding:16px; text-align:center; background:#f8fafc; cursor:pointer; transition:border-color .15s,background .15s; }
+  .drop.drag { border-color:#2563eb; background:#eff6ff; }
+  .drop strong { display:block; font-size:13px; margin-bottom:4px; }
+  .drop span { font-size:12px; color:var(--muted); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px; }
+  input[type=text], input[type=number], select { padding:6px 9px; border:1px solid #d1d5db; border-radius:6px; font-size:13px; font-family:ui-monospace,Consolas,monospace; }
+  button { padding:6px 12px; border:1px solid #d1d5db; border-radius:6px; background:#fff; color:var(--text); cursor:pointer; font-size:13px; }
+  button:hover { background:#f9fafb; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button.primary:hover { background:#1f2937; }
+  button.tab.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .status { font-size:12px; color:var(--muted); margin-top:8px; font-family:ui-monospace,Consolas,monospace; }
+  .err { color:var(--reg); font-weight:600; }
+  .viz { overflow-x:auto; border:1px solid var(--border); border-radius:8px; background:#fafafa; padding:8px; min-height:140px; }
+  .fg-frame { cursor:pointer; }
+  .fg-frame.matched rect { stroke:#7c3aed; stroke-width:1.8; }
+  .fg-frame.dimmed { opacity:0.25; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:7px 9px; border-bottom:1px solid var(--border); }
+  th { background:#f9fafb; font-weight:600; }
+  code { font-family:ui-monospace,Consolas,monospace; font-size:12px; }
+  .badge-reg { color:var(--reg); font-weight:600; }
+  .badge-imp { color:var(--imp); font-weight:600; }
+  pre { background:#f8fafc; border:1px solid var(--border); border-radius:6px; padding:12px; overflow:auto; font-size:12px; max-height:460px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>moon-pprof <span class="pill">100% Client-Side / Zero Upload</span></h1>
+      <div class="sub">Pure MoonBit Google <code>profile.proto</code> decoder, differential analyzer, Flamegraph &amp; layered Callgraph renderer running locally in your browser.</div>
+    </div>
+    <div class="row" style="margin-top:0">
+      <button id="demo-cpu-diff">Load Go CPU Diff Demo</button>
+      <button id="demo-heap-diff">Load Go Heap Diff Demo</button>
+      <button id="demo-heap-single">Load Go Heap Single Demo</button>
+    </div>
+  </header>
+
+  <div class="card">
+    <div class="grid2">
+      <div class="drop" id="drop-base">
+        <strong>Baseline / Single Profile (<code>.pb.gz</code> or <code>.pb</code>)</strong>
+        <span id="base-label">Drop file here or click to select</span>
+        <input id="file-base" type="file" accept=".gz,.pb,.pprof" style="display:none">
+      </div>
+      <div class="drop" id="drop-cand">
+        <strong>Candidate Profile (Optional — enables Differential Mode)</strong>
+        <span id="cand-label">Drop second file to compare, or leave empty for single view</span>
+        <input id="file-cand" type="file" accept=".gz,.pb,.pprof" style="display:none">
+      </div>
+    </div>
+
+    <div class="row">
+      <label style="font-size:12px;color:var(--muted)">Metric:</label>
+      <select id="metric"></select>
+      <input id="focus" type="text" placeholder="focus (substring)" style="width:155px">
+      <input id="ignore" type="text" placeholder="ignore (substring)" style="width:155px">
+      <input id="hide" type="text" placeholder="hide (substring)" style="width:145px">
+      <input id="label" type="text" placeholder="label key=val" style="width:145px">
+      <label style="font-size:12px"><input id="normalize" type="checkbox"> Normalize diff</label>
+      <label style="font-size:12px;color:var(--muted)">Max CG nodes:</label>
+      <input id="max-nodes" type="number" value="30" min="5" max="100" style="width:68px">
+      <button class="primary" id="run-btn">Analyze</button>
+      <button id="clear-cand">Clear Candidate</button>
+    </div>
+    <div class="status" id="status">Ready. Drop a .pb.gz profile or load a built-in Go demo above.</div>
+  </div>
+
+  <div class="card" id="output-card" style="display:none">
+    <div class="row" style="margin-top:0;margin-bottom:12px;justify-content:space-between">
+      <div class="row" style="margin-top:0">
+        <button class="tab active" data-tab="fg">Flamegraph</button>
+        <button class="tab" data-tab="cg">Callgraph</button>
+        <button class="tab" data-tab="tbl">Top / Diff Table</button>
+        <button class="tab" data-tab="peek">Peek Callers/Callees</button>
+        <button class="tab" data-tab="md">Markdown / DOT</button>
+      </div>
+      <div class="row" style="margin-top:0">
+        <input id="fg-search" type="text" placeholder="Highlight frame..." style="width:170px">
+        <button id="fg-reset">Reset Zoom</button>
+        <button id="dl-svg">Download Current SVG</button>
+      </div>
+    </div>
+
+    <div id="tab-fg" class="tab-pane"><div class="viz" id="fg-box"></div></div>
+    <div id="tab-cg" class="tab-pane" style="display:none"><div class="viz" id="cg-box"></div></div>
+    <div id="tab-tbl" class="tab-pane" style="display:none"><div id="tbl-box"></div></div>
+    <div id="tab-peek" class="tab-pane" style="display:none">
+      <div class="row" style="margin-top:0;margin-bottom:10px">
+        <input id="peek-pat" type="text" placeholder="Function substring (e.g. main.)" style="width:240px">
+        <button class="primary" id="peek-btn">Run Peek</button>
+      </div>
+      <pre id="peek-box">Enter a function substring and click Run Peek.</pre>
+    </div>
+    <div id="tab-md" class="tab-pane" style="display:none">
+      <h4 style="margin:0 0 6px">Markdown Report</h4>
+      <pre id="md-box"></pre>
+      <h4 style="margin:12px 0 6px">Graphviz DOT</h4>
+      <pre id="dot-box"></pre>
+    </div>
+  </div>
+</div>
+
+<script src="./moon-pprof.js"></script>
+<script src="./samples.js"></script>
+<script>
+(function(){
+  let baseB64 = "", candB64 = "", lastResult = null, currentTab = "fg";
+  const $ = id => document.getElementById(id);
+
+  function setStatus(msg, isErr){
+    const el = $("status");
+    el.textContent = msg;
+    el.className = isErr ? "status err" : "status";
+  }
+
+  function bytesToBase64(buf){
+    const bytes = new Uint8Array(buf);
+    let bin = "";
+    const chunk = 0x8000;
+    for(let i = 0; i < bytes.length; i += chunk){
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(bin);
+  }
+
+  function wireDrop(dropId, fileId, onLoad){
+    const dz = $(dropId), fi = $(fileId);
+    dz.addEventListener("click", () => fi.click());
+    dz.addEventListener("dragover", e => { e.preventDefault(); dz.classList.add("drag"); });
+    dz.addEventListener("dragleave", () => dz.classList.remove("drag"));
+    dz.addEventListener("drop", e => {
+      e.preventDefault(); dz.classList.remove("drag");
+      if(e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0], onLoad);
+    });
+    fi.addEventListener("change", () => { if(fi.files[0]) readFile(fi.files[0], onLoad); });
+  }
+
+  function readFile(file, cb){
+    const reader = new FileReader();
+    reader.onload = () => cb(file.name, bytesToBase64(reader.result));
+    reader.readAsArrayBuffer(file);
+  }
+
+  function populateMetrics(b64){
+    const info = globalThis.MoonPprof.inspectProfile(b64);
+    if(!info.ok){ setStatus("Decode error: " + info.error, true); return false; }
+    const sel = $("metric");
+    sel.innerHTML = "";
+    info.metrics.forEach(m => {
+      const opt = document.createElement("option");
+      opt.value = m.name;
+      opt.textContent = m.name + " (" + m.unit + ")";
+      if(m.name === info.default_sample_type) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    setStatus("Loaded profile: " + info.sample_count + " samples, " + info.function_count + " functions, " + info.metrics.length + " metric(s).");
+    return true;
+  }
+
+  function bindFlamegraphZoom(){
+    const svg = $("fg-box").querySelector(".moon-pprof-svg");
+    if(!svg) return;
+    const frames = [...svg.querySelectorAll(".fg-frame")];
+    const orig = frames.map(f => ({ el:f, x:+f.dataset.x, w:+f.dataset.w, d:+f.dataset.depth, name:f.dataset.name.toLowerCase(), val:+f.dataset.val }));
+    const root = orig[0];
+    function applyZoom(target){
+      const tx = target ? target.x : root.x, tw = target ? target.w : root.w, td = target ? target.d : 0;
+      const scale = root.w / tw;
+      orig.forEach(o => {
+        const r = o.el.querySelector("rect"), t = o.el.querySelector("text");
+        if(o.x + o.w <= tx || o.x >= tx + tw){ o.el.style.display = "none"; return; }
+        o.el.style.display = "";
+        const nx = root.x + (o.x - tx) * scale;
+        const nw = Math.max(0.5, o.w * scale - 0.6);
+        r.setAttribute("x", nx.toFixed(2));
+        r.setAttribute("width", nw.toFixed(2));
+        if(t){ t.setAttribute("x", (nx + 4).toFixed(2)); t.style.display = nw < 28 ? "none" : ""; }
+        o.el.classList.toggle("dimmed", o.d < td);
+      });
+    }
+    orig.forEach(o => o.el.addEventListener("click", () => applyZoom(o)));
+    $("fg-reset").onclick = () => applyZoom(null);
+    $("fg-search").oninput = () => {
+      const term = $("fg-search").value.trim().toLowerCase();
+      orig.forEach(o => o.el.classList.toggle("matched", term !== "" && o.name.includes(term)));
+    };
+  }
+
+  function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+  function renderTable(res){
+    if(res.diff){
+      const d = res.diff;
+      let html = "<p style='margin-top:0;font-size:13px'><strong>Metric:</strong> <code>" + esc(d.sample_type) + "</code> (" + esc(d.unit) + ") | <strong>Total:</strong> " + esc(d.baseline_total) + " &rarr; " + esc(d.candidate_total) + " (" + d.delta_total_pct + "%)</p>";
+      html += "<table><thead><tr><th>Function</th><th>Status</th><th>Base Cum</th><th>Cand Cum</th><th>Delta Cum</th><th>Delta %</th><th>Share pp</th></tr></thead><tbody>";
+      d.entries.forEach(e => {
+        const cls = (e.classification === "regressed" || e.classification === "added") ? "badge-reg" : (e.classification === "improved" || e.classification === "removed") ? "badge-imp" : "";
+        html += "<tr><td><code>" + esc(e.name) + "</code></td><td class='" + cls + "'>" + esc(e.classification) + "</td><td>" + esc(e.baseline_cum) + "</td><td>" + esc(e.candidate_cum) + "</td><td>" + esc(e.delta_cum) + "</td><td>" + e.delta_cum_pct + "%</td><td>" + e.delta_cum_share_pp + "pp</td></tr>";
+      });
+      return html + "</tbody></table>";
+    }
+    const t = res.top;
+    let html = "<p style='margin-top:0;font-size:13px'><strong>Metric:</strong> <code>" + esc(t.sample_type) + "</code> (" + esc(t.unit) + ") | <strong>Total:</strong> " + esc(t.total) + " | <strong>Samples:</strong> " + t.sample_count + "</p>";
+    html += "<table><thead><tr><th>Function</th><th>Flat</th><th>Flat %</th><th>Cum</th><th>Cum %</th></tr></thead><tbody>";
+    t.entries.forEach(e => {
+      html += "<tr><td><code>" + esc(e.name) + "</code></td><td>" + esc(e.flat) + "</td><td>" + e.flat_pct + "%</td><td>" + esc(e.cum) + "</td><td>" + e.cum_pct + "%</td></tr>";
+    });
+    return html + "</tbody></table>";
+  }
+
+  function runAnalyze(){
+    if(!globalThis.MoonPprof){ setStatus("moon-pprof.js failed to load. Run python demo/build_web.py first.", true); return; }
+    if(!baseB64){ setStatus("Please drop a profile or click a demo button first.", true); return; }
+    const rawLbl = $("label").value.trim();
+    let labelKey = "", labelValue = "";
+    if(rawLbl){
+      const idx = rawLbl.indexOf("=");
+      if(idx >= 0){ labelKey = rawLbl.slice(0, idx); labelValue = rawLbl.slice(idx + 1); }
+      else labelKey = rawLbl;
+    }
+    const opts = {
+      sampleType: $("metric").value,
+      normalize: $("normalize").checked,
+      focus: $("focus").value.trim(),
+      ignore: $("ignore").value.trim(),
+      hide: $("hide").value.trim(),
+      labelKey,
+      labelValue,
+      maxNodes: parseInt($("max-nodes").value, 10) || 30
+    };
+    const t0 = performance.now();
+    const res = candB64
+      ? globalThis.MoonPprof.compareProfiles(baseB64, candB64, opts)
+      : globalThis.MoonPprof.analyzeProfile(baseB64, opts);
+    const ms = (performance.now() - t0).toFixed(1);
+    if(!res.ok){ setStatus("Analysis error: " + res.error, true); return; }
+    lastResult = res;
+    $("output-card").style.display = "";
+    $("fg-box").innerHTML = res.flamegraph_svg;
+    $("cg-box").innerHTML = res.callgraph_svg;
+    $("tbl-box").innerHTML = renderTable(res);
+    $("md-box").textContent = res.markdown;
+    $("dot-box").textContent = res.callgraph_dot;
+    bindFlamegraphZoom();
+    setStatus((candB64 ? "Differential analysis" : "Single-profile analysis") + " completed locally in " + ms + " ms (metric: " + opts.sampleType + ").");
+  }
+
+  wireDrop("drop-base", "file-base", (name, b64) => {
+    baseB64 = b64;
+    $("base-label").textContent = "Loaded: " + name;
+    if(populateMetrics(b64)) runAnalyze();
+  });
+  wireDrop("drop-cand", "file-cand", (name, b64) => {
+    candB64 = b64;
+    $("cand-label").textContent = "Loaded: " + name;
+    if(baseB64) runAnalyze();
+  });
+
+  $("run-btn").addEventListener("click", runAnalyze);
+  $("metric").addEventListener("change", runAnalyze);
+  $("clear-cand").addEventListener("click", () => {
+    candB64 = "";
+    $("cand-label").textContent = "Drop second file to compare, or leave empty for single view";
+    if(baseB64) runAnalyze();
+  });
+
+  document.querySelectorAll(".tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      currentTab = btn.dataset.tab;
+      document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b === btn));
+      document.querySelectorAll(".tab-pane").forEach(p => p.style.display = (p.id === "tab-" + currentTab) ? "" : "none");
+    });
+  });
+
+  $("peek-btn").addEventListener("click", () => {
+    const target = candB64 || baseB64;
+    if(!target) return;
+    const res = globalThis.MoonPprof.peekProfile(target, $("peek-pat").value.trim(), {
+      sampleType: $("metric").value,
+      focus: $("focus").value.trim()
+    });
+    $("peek-box").textContent = res.ok ? res.markdown : ("Error: " + res.error);
+  });
+
+  $("dl-svg").addEventListener("click", () => {
+    if(!lastResult) return;
+    const svg = currentTab === "cg" ? lastResult.callgraph_svg : lastResult.flamegraph_svg;
+    const blob = new Blob([svg], { type: "image/svg+xml" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = currentTab === "cg" ? "moon-pprof-callgraph.svg" : "moon-pprof-flamegraph.svg";
+    a.click();
+  });
+
+  function loadDemo(baseKey, candKey, baseName, candName, preferredMetric){
+    if(!globalThis.MOON_PPROF_SAMPLES){ setStatus("samples.js not loaded. Run python demo/build_web.py.", true); return; }
+    baseB64 = globalThis.MOON_PPROF_SAMPLES[baseKey];
+    candB64 = candKey ? globalThis.MOON_PPROF_SAMPLES[candKey] : "";
+    $("base-label").textContent = "Demo: " + baseName;
+    $("cand-label").textContent = candName ? ("Demo: " + candName) : "Single-profile mode";
+    if(populateMetrics(baseB64)){
+      if(preferredMetric) $("metric").value = preferredMetric;
+      runAnalyze();
+    }
+  }
+
+  $("demo-cpu-diff").addEventListener("click", () => loadDemo("baseline_cpu", "candidate_cpu", "baseline-cpu.pb.gz", "candidate-cpu.pb.gz", "cpu"));
+  $("demo-heap-diff").addEventListener("click", () => loadDemo("baseline_heap", "candidate_heap", "baseline-heap.pb.gz", "candidate-heap.pb.gz", "alloc_space"));
+  $("demo-heap-single").addEventListener("click", () => loadDemo("candidate_heap", "", "candidate-heap.pb.gz", "", "alloc_space"));
+})();
+</script>
+</body>
+</html>

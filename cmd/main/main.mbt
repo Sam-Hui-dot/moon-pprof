@@ -2,7 +2,9 @@
 let usage : String =
   #|moon-pprof top <FILE> [--sample-type NAME] [--sort flat|cum] [--limit N] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--filter TEXT] [--format text|json|md] [--out FILE]
   #|moon-pprof folded <FILE> [--sample-type NAME] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--filter TEXT] [--out FILE]
-  #|moon-pprof flamegraph <FILE> [--sample-type NAME] [--title TEXT] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--filter TEXT] [--html] [--out FILE]
+  #|moon-pprof flamegraph <FILE> [--sample-type NAME] [--title TEXT] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--filter TEXT] [--html] [--all-metrics] [--out FILE]
+  #|moon-pprof callgraph <FILE> [--diff <CANDIDATE>] [--sample-type NAME] [--normalize] [--max-nodes N] [--min-node-pct P] [--title TEXT] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--format svg|dot|json] [--out FILE]
+  #|moon-pprof peek <FILE> [--pattern SUBSTR] [--sample-type NAME] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--format text|json|md] [--out FILE]
   #|moon-pprof diff <BASE> <CANDIDATE> [--sample-type NAME] [--normalize] [--max-total-pct P] [--max-func-pct P] [--min-delta V] [--limit N] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--filter TEXT] [--format text|json|md] [--out FILE] [--flamegraph-out FILE] [--html-out FILE]
   #|moon-pprof merge <FILE1> <FILE2> [FILE...] --out <MERGED.pb.gz> [--raw]
   #|moon-pprof labels <FILE> --key <LABEL_KEY> [--sample-type NAME] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--format text|json|md] [--out FILE]
@@ -254,6 +256,7 @@ async fn cmd_flamegraph(args : Array[String]) -> Int32 {
   let mut label_key = ""
   let mut label_value = ""
   let mut as_html = false
+  let mut all_metrics = false
   let mut out_path : String? = None
   let mut i = 2
   while i < args.length() {
@@ -288,6 +291,10 @@ async fn cmd_flamegraph(args : Array[String]) -> Int32 {
         as_html = true
         i += 1
       }
+      "--all-metrics" => {
+        all_metrics = true
+        i += 1
+      }
       "--out" => {
         out_path = Some(next_flag_value(args, i, "--out"))
         i += 2
@@ -306,7 +313,9 @@ async fn cmd_flamegraph(args : Array[String]) -> Int32 {
       label_value~,
     ),
   )
-  let rendered = if as_html {
+  let rendered = if all_metrics {
+    @moon-pprof.render_multi_metric_html(profile, title~, spec~)
+  } else if as_html {
     @moon-pprof.render_top_html(profile, sample_type~, title~, spec~)
   } else {
     @moon-pprof.render_flamegraph_svg(profile, sample_type~, title~, spec~)
@@ -594,11 +603,230 @@ async fn cmd_labels(args : Array[String]) -> Int32 {
 }
 
 ///|
+async fn cmd_callgraph(args : Array[String]) -> Int32 {
+  guard args.length() >= 2 else {
+    raise @moon-pprof.PprofError::InvalidInput(usage)
+  }
+  let file = args[1]
+  let mut diff_file : String? = None
+  let mut sample_type = ""
+  let mut normalize = false
+  let mut max_nodes = 35
+  let mut min_node_pct = 0.5
+  let mut title = "MoonBit pprof Callgraph"
+  let mut focus = ""
+  let mut ignore_pattern = ""
+  let mut hide = ""
+  let mut label_key = ""
+  let mut label_value = ""
+  let mut format = "svg"
+  let mut out_path : String? = None
+  let mut i = 2
+  while i < args.length() {
+    match args[i] {
+      "--diff" => {
+        diff_file = Some(next_flag_value(args, i, "--diff"))
+        i += 2
+      }
+      "--sample-type" => {
+        sample_type = next_flag_value(args, i, "--sample-type")
+        i += 2
+      }
+      "--normalize" => {
+        normalize = true
+        i += 1
+      }
+      "--max-nodes" => {
+        max_nodes = parse_int_arg(
+          "--max-nodes",
+          next_flag_value(args, i, "--max-nodes"),
+        )
+        i += 2
+      }
+      "--min-node-pct" => {
+        min_node_pct = parse_double_arg(
+          "--min-node-pct",
+          next_flag_value(args, i, "--min-node-pct"),
+        )
+        i += 2
+      }
+      "--title" => {
+        title = next_flag_value(args, i, "--title")
+        i += 2
+      }
+      "--focus" | "--filter" => {
+        focus = next_flag_value(args, i, args[i])
+        i += 2
+      }
+      "--ignore" => {
+        ignore_pattern = next_flag_value(args, i, "--ignore")
+        i += 2
+      }
+      "--hide" => {
+        hide = next_flag_value(args, i, "--hide")
+        i += 2
+      }
+      "--label" => {
+        let (k, v) = parse_label_kv(next_flag_value(args, i, "--label"))
+        label_key = k
+        label_value = v
+        i += 2
+      }
+      "--format" => {
+        format = next_flag_value(args, i, "--format")
+        i += 2
+      }
+      "--out" => {
+        out_path = Some(next_flag_value(args, i, "--out"))
+        i += 2
+      }
+      other =>
+        raise @moon-pprof.PprofError::InvalidInput("unknown option: \{other}")
+    }
+  }
+  let base_profile = load_profile(file)
+  let spec = Some(
+    @moon-pprof.filter_spec(
+      focus~,
+      ignore_pattern~,
+      hide~,
+      label_key~,
+      label_value~,
+    ),
+  )
+  let rendered = match diff_file {
+    Some(cand_path) => {
+      let cand_profile = load_profile(cand_path)
+      let dcg = @moon-pprof.build_diff_callgraph(
+        base_profile,
+        cand_profile,
+        sample_type~,
+        max_nodes~,
+        min_node_pct~,
+        normalize~,
+        spec~,
+      )
+      match format {
+        "svg" => @moon-pprof.render_diff_callgraph_svg(dcg, title~)
+        "dot" => @moon-pprof.render_diff_callgraph_dot(dcg)
+        "json" => @json.ToJson::to_json(dcg).stringify()
+        _ =>
+          raise @moon-pprof.PprofError::InvalidInput(
+            "unsupported --format value: \{format} (expected svg, dot, or json)",
+          )
+      }
+    }
+    None => {
+      let cg = @moon-pprof.build_callgraph(
+        base_profile,
+        sample_type~,
+        max_nodes~,
+        min_node_pct~,
+        spec~,
+      )
+      match format {
+        "svg" => @moon-pprof.render_callgraph_svg(cg, title~)
+        "dot" => @moon-pprof.render_callgraph_dot(cg)
+        "json" => @json.ToJson::to_json(cg).stringify()
+        _ =>
+          raise @moon-pprof.PprofError::InvalidInput(
+            "unsupported --format value: \{format} (expected svg, dot, or json)",
+          )
+      }
+    }
+  }
+  emit_output(rendered, out_path)
+  0
+}
+
+///|
+async fn cmd_peek(args : Array[String]) -> Int32 {
+  guard args.length() >= 2 else {
+    raise @moon-pprof.PprofError::InvalidInput(usage)
+  }
+  let file = args[1]
+  let mut pattern = ""
+  let mut sample_type = ""
+  let mut focus = ""
+  let mut ignore_pattern = ""
+  let mut hide = ""
+  let mut label_key = ""
+  let mut label_value = ""
+  let mut format = "text"
+  let mut out_path : String? = None
+  let mut i = 2
+  while i < args.length() {
+    match args[i] {
+      "--pattern" => {
+        pattern = next_flag_value(args, i, "--pattern")
+        i += 2
+      }
+      "--sample-type" => {
+        sample_type = next_flag_value(args, i, "--sample-type")
+        i += 2
+      }
+      "--focus" | "--filter" => {
+        focus = next_flag_value(args, i, args[i])
+        i += 2
+      }
+      "--ignore" => {
+        ignore_pattern = next_flag_value(args, i, "--ignore")
+        i += 2
+      }
+      "--hide" => {
+        hide = next_flag_value(args, i, "--hide")
+        i += 2
+      }
+      "--label" => {
+        let (k, v) = parse_label_kv(next_flag_value(args, i, "--label"))
+        label_key = k
+        label_value = v
+        i += 2
+      }
+      "--format" => {
+        format = next_flag_value(args, i, "--format")
+        i += 2
+      }
+      "--out" => {
+        out_path = Some(next_flag_value(args, i, "--out"))
+        i += 2
+      }
+      other =>
+        raise @moon-pprof.PprofError::InvalidInput("unknown option: \{other}")
+    }
+  }
+  let profile = load_profile(file)
+  let spec = Some(
+    @moon-pprof.filter_spec(
+      focus~,
+      ignore_pattern~,
+      hide~,
+      label_key~,
+      label_value~,
+    ),
+  )
+  let report = @moon-pprof.compute_peek(profile, pattern, sample_type~, spec~)
+  let rendered = match format {
+    "text" => @moon-pprof.render_peek_text(report)
+    "json" => @json.ToJson::to_json(report).stringify()
+    "md" | "markdown" => @moon-pprof.render_peek_markdown(report)
+    _ =>
+      raise @moon-pprof.PprofError::InvalidInput(
+        "unsupported --format value: \{format}",
+      )
+  }
+  emit_output(rendered, out_path)
+  0
+}
+
+///|
 async fn run(args : Array[String]) -> Int32 {
   match args.get(0) {
     Some("top") => cmd_top(args)
     Some("folded") => cmd_folded(args)
     Some("flamegraph") => cmd_flamegraph(args)
+    Some("callgraph") => cmd_callgraph(args)
+    Some("peek") => cmd_peek(args)
     Some("diff") => cmd_diff(args)
     Some("merge") => cmd_merge(args)
     Some("labels") => cmd_labels(args)

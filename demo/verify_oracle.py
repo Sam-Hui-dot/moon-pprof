@@ -152,6 +152,51 @@ def verify_diff(base_path: Path, cand_path: Path):
     )
 
 
+def verify_peek_and_callgraph(base_cpu: Path, cand_cpu: Path, cand_heap: Path):
+    # Cross-check peek flat/cum and direct callers/callees against `go tool pprof -peek`
+    go_res = run(["go", "tool", "pprof", "-peek=main.captureCPU", "-unit=ns", str(cand_cpu)])
+    go_edges = {}
+    for line in go_res.stdout.splitlines():
+        m = re.match(r"^\s+(\d+(?:\.\d+)?)(ns|us|ms|s)\s+(\d+(?:\.\d+)?)(ns|us|ms|s)?\s+\|\s+(.+?)\s*$", line)
+        if m:
+            # go tool pprof -peek shows edge weight in the cum column for callers/callees
+            w = to_base_unit(float(m.group(1)), m.group(2))
+            go_edges[m.group(5).strip()] = w
+
+    res = run_moon_pprof(["peek", str(cand_cpu), "--pattern", "main.captureCPU", "--format", "json"])
+    peek = json.loads(res.stdout.strip().splitlines()[-1])
+    assert len(peek["functions"]) == 1, peek
+    fn = peek["functions"][0]
+    assert fn["name"] == "main.captureCPU"
+    assert int(fn["cum"]) == 490_000_000
+    assert len(fn["callers"]) >= 1 and len(fn["callees"]) >= 1
+    for edge in fn["callers"] + fn["callees"]:
+        if edge["name"] in go_edges:
+            assert int(edge["weight"]) == go_edges[edge["name"]], (
+                f"peek edge mismatch on {edge['name']}: moon={edge['weight']} go={go_edges[edge['name']]}"
+            )
+    print(f"[PEEK ORACLE OK] main.captureCPU cum={fn['cum']}ns, callers={len(fn['callers'])}, callees={len(fn['callees'])}")
+
+    # Verify callgraph SVG, DOT, and differential callgraph SVG
+    cg_svg = OUT / "callgraph-cpu.svg"
+    cg_dot = OUT / "callgraph-cpu.dot"
+    dcg_svg = OUT / "diff-callgraph-cpu.svg"
+    multi_html = OUT / "heap-all-metrics.html"
+    run_moon_pprof(["callgraph", str(cand_cpu), "--format", "svg", "--out", str(cg_svg)])
+    run_moon_pprof(["callgraph", str(cand_cpu), "--format", "dot", "--out", str(cg_dot)])
+    run_moon_pprof(["callgraph", str(base_cpu), "--diff", str(cand_cpu), "--format", "svg", "--out", str(dcg_svg)])
+    run_moon_pprof(["flamegraph", str(cand_heap), "--all-metrics", "--out", str(multi_html)])
+
+    assert cg_svg.exists() and "main.captureCPU" in cg_svg.read_text(encoding="utf-8")
+    assert cg_dot.exists() and "digraph \"moon-pprof\"" in cg_dot.read_text(encoding="utf-8")
+    assert dcg_svg.exists() and "slowRegressionLoop" in dcg_svg.read_text(encoding="utf-8")
+    mh_text = multi_html.read_text(encoding="utf-8")
+    for metric in ("alloc_objects", "alloc_space", "inuse_objects", "inuse_space"):
+        assert metric in mh_text, f"Missing metric {metric} in multi-metric HTML"
+    assert "moon-pprof-cg-svg" in mh_text
+    print("[CALLGRAPH & MULTI-METRIC OK] generated callgraph SVG/DOT, diff callgraph SVG, and 4-metric Heap HTML")
+
+
 def main():
     base_cpu = FIXTURES / "baseline-cpu.pb.gz"
     cand_cpu = FIXTURES / "candidate-cpu.pb.gz"
@@ -166,6 +211,7 @@ def main():
     verify_single(cand_heap, sample_type="alloc_space", expected_type="alloc_space", unit_flag="B")
     verify_merge_oracle(base_cpu, cand_cpu)
     verify_diff(base_cpu, cand_cpu)
+    verify_peek_and_callgraph(base_cpu, cand_cpu, cand_heap)
 
 
 if __name__ == "__main__":

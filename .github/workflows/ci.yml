@@ -43,14 +43,14 @@ jobs:
         run: |
           WS="$RUNNER_TEMP/moon-pprof-consumer"
           mkdir -p "$WS/library" "$WS/consumer"
-          cp moon.mod moon.pkg types.mbt wire.mbt decoder.mbt merge.mbt analysis.mbt diff.mbt flamegraph.mbt report.mbt "$WS/library/"
+          cp moon.mod moon.pkg types.mbt wire.mbt decoder.mbt merge.mbt analysis.mbt diff.mbt flamegraph.mbt callgraph.mbt peek.mbt report.mbt "$WS/library/"
           printf 'members = ["library", "consumer"]\n' > "$WS/moon.work"
           cat > "$WS/consumer/moon.mod" << 'EOF'
           name = "consumer/pprof-check"
           version = "0.1.0"
 
           import {
-            "Sam-Hui-dot/moon-pprof@0.2.0",
+            "Sam-Hui-dot/moon-pprof@0.3.0",
           }
           EOF
           cat > "$WS/consumer/moon.pkg" << 'EOF'
@@ -87,11 +87,23 @@ jobs:
             guard svg.contains("demo.work") else {
               abort("unexpected svg")
             }
+            let cg = @pprof.build_callgraph(decoded)
+            let cg_svg = @pprof.render_callgraph_svg(cg)
+            guard cg_svg.contains("demo.work") else {
+              abort("unexpected callgraph svg")
+            }
+            let peek = @pprof.compute_peek(decoded, "demo")
+            guard peek.functions.length() == 1 else {
+              abort("unexpected peek")
+            }
             println("consumer: ok")
           }
           EOF
           MOON_WORK="" moon -C "$WS/consumer" run --target js --deny-warn .
           MOON_WORK="" moon -C "$WS/consumer" run --target wasm --deny-warn .
+      - name: Build and smoke-test zero-upload browser playground bundle
+        run: |
+          python3 demo/build_web.py
       - name: Cross-check against official go tool pprof and publish Step Summary
         run: |
           python3 demo/verify_oracle.py

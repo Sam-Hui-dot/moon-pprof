@@ -43,14 +43,14 @@ jobs:
         run: |
           WS="$RUNNER_TEMP/moon-pprof-consumer"
           mkdir -p "$WS/library" "$WS/consumer"
-          cp moon.mod moon.pkg types.mbt wire.mbt decoder.mbt merge.mbt analysis.mbt diff.mbt flamegraph.mbt callgraph.mbt peek.mbt report.mbt "$WS/library/"
+          cp moon.mod moon.pkg types.mbt wire.mbt decoder.mbt merge.mbt ingest.mbt prune.mbt analysis.mbt diff.mbt flamegraph.mbt callgraph.mbt peek.mbt lines.mbt report.mbt "$WS/library/"
           printf 'members = ["library", "consumer"]\n' > "$WS/moon.work"
           cat > "$WS/consumer/moon.mod" << 'EOF'
           name = "consumer/pprof-check"
           version = "0.1.0"
 
           import {
-            "Sam-Hui-dot/moon-pprof@0.3.0",
+            "Sam-Hui-dot/moon-pprof@0.4.0",
           }
           EOF
           cat > "$WS/consumer/moon.pkg" << 'EOF'
@@ -61,40 +61,26 @@ jobs:
           EOF
           cat > "$WS/consumer/main.mbt" << 'EOF'
           fn main raise {
-            let p : @pprof.Profile = {
-              sample_types: [{ type_idx: 1L, unit_idx: 2L }],
-              samples: [{ location_ids: [1UL], values: [100L], labels: [] }],
-              mappings: [],
-              locations: [{ id: 1UL, mapping_id: 0UL, address: 0x100UL, lines: [{ function_id: 1UL, line: 1L }], is_folded: false }],
-              functions: [{ id: 1UL, name_idx: 3L, system_name_idx: 3L, filename_idx: 0L, start_line: 1L }],
-              string_table: ["", "cpu", "nanoseconds", "demo.work"],
-              drop_frames: 0L,
-              keep_frames: 0L,
-              time_nanos: 0L,
-              duration_nanos: 0L,
-              period_type: None,
-              period: 0L,
-              comments: [],
-              default_sample_type: 1L,
-            }
-            let gz = @pprof.encode_profile(p, gzip=true)
-            let decoded = @pprof.decode_profile(gz)
+            let p = @pprof.from_folded_stacks("app.main;app.work 100\n")
+            let pruned = @pprof.prune_profile(p, @pprof.filter_spec(focus="app.work"))
+            let gz = @pprof.encode_profile(pruned, gzip=true)
+            let decoded = @pprof.decode_any_profile(gz)
             let top = @pprof.compute_top(decoded)
-            guard top.total == 100L && top.entries.length() == 1 else {
+            guard top.total == 100L && top.entries.length() == 2 else {
               abort("unexpected top report")
             }
             let svg = @pprof.render_flamegraph_svg(decoded)
-            guard svg.contains("demo.work") else {
+            guard svg.contains("app.work") else {
               abort("unexpected svg")
             }
             let cg = @pprof.build_callgraph(decoded)
             let cg_svg = @pprof.render_callgraph_svg(cg)
-            guard cg_svg.contains("demo.work") else {
+            guard cg_svg.contains("app.work") else {
               abort("unexpected callgraph svg")
             }
-            let peek = @pprof.compute_peek(decoded, "demo")
-            guard peek.functions.length() == 1 else {
-              abort("unexpected peek")
+            let tr = @pprof.compute_traces(decoded)
+            guard tr.traces.length() == 1 else {
+              abort("unexpected traces")
             }
             println("consumer: ok")
           }
@@ -107,4 +93,5 @@ jobs:
       - name: Cross-check against official go tool pprof and publish Step Summary
         run: |
           python3 demo/verify_oracle.py
+          python3 demo/benchmark.py --quick
           cat demo/out/diff-report.md >> "$GITHUB_STEP_SUMMARY"

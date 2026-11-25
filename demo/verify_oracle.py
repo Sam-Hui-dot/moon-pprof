@@ -197,14 +197,60 @@ def verify_peek_and_callgraph(base_cpu: Path, cand_cpu: Path, cand_heap: Path):
     print("[CALLGRAPH & MULTI-METRIC OK] generated callgraph SVG/DOT, diff callgraph SVG, and 4-metric Heap HTML")
 
 
+def verify_prune_list_and_dogfood(cand_cpu: Path, self_v8: Path):
+    # Cross-check `moon-pprof prune --focus main.slowRegressionLoop` against `go tool pprof -proto -focus=main.slowRegressionLoop`
+    moon_pruned = OUT / "moon-pruned-cpu.pb.gz"
+    go_pruned = OUT / "go-pruned-cpu.pb.gz"
+    run_moon_pprof(["prune", str(cand_cpu), "--focus", "main.slowRegressionLoop", "--out", str(moon_pruned)])
+    run(["go", "tool", "pprof", "-proto", "-focus=main.slowRegressionLoop", f"-output={go_pruned}", str(cand_cpu)])
+
+    go_total, go_rows = parse_go_pprof_top(go_pruned, unit_flag="ns")
+    res = run_moon_pprof(["top", str(moon_pruned), "--limit", "100", "--format", "json"])
+    report = json.loads(res.stdout.strip().splitlines()[-1])
+    assert int(report["total"]) == go_total, f"prune total mismatch: moon={report['total']} go={go_total}"
+    moon_rows = {e["name"]: (int(e["flat"]), int(e["cum"])) for e in report["entries"]}
+    checked = 0
+    for fn_name, (g_flat, g_cum) in go_rows.items():
+        if fn_name in moon_rows:
+            assert moon_rows[fn_name] == (g_flat, g_cum), f"prune mismatch on {fn_name}"
+            checked += 1
+    assert checked >= 2
+    print(f"[PRUNE ORACLE OK] focused total={go_total}ns, exact 0-error match on {checked} functions against `go tool pprof -proto -focus`")
+
+    # Verify `list` source-line hotspots + annotated Go source + `traces`
+    list_res = run_moon_pprof(["list", str(cand_cpu), "--pattern", "slowRegressionLoop", "--format", "json"])
+    list_report = json.loads(list_res.stdout.strip().splitlines()[-1])
+    assert len(list_report["entries"]) >= 1 and int(list_report["entries"][0]["line"]) > 0
+    annot_res = run_moon_pprof([
+        "list", str(cand_cpu), "--pattern", "slowRegressionLoop",
+        "--source-file", str(ROOT / "demo" / "gen_go_profiles.go"),
+    ])
+    assert "ROUTINE ========================" in annot_res.stdout and "slowRegressionLoop" in annot_res.stdout
+    traces_res = run_moon_pprof(["traces", str(cand_cpu), "--limit", "10", "--format", "json"])
+    traces_report = json.loads(traces_res.stdout.strip().splitlines()[-1])
+    assert int(traces_report["total"]) == 490_000_000 and len(traces_report["traces"]) >= 1
+    print(f"[LIST & TRACES OK] line hotspots={len(list_report['entries'])}, traces={len(traces_report['traces'])}")
+
+    # Verify V8 .cpuprofile -> .pb.gz conversion (MoonBit Dogfooding) is readable by official `go tool pprof`!
+    converted_gz = OUT / "moonbit-self-converted.pb.gz"
+    run_moon_pprof(["convert", str(self_v8), "--from", "v8", "--out", str(converted_gz)])
+    go_self_total, _ = parse_go_pprof_top(converted_gz, unit_flag="ns")
+    moon_self_res = run_moon_pprof(["top", str(converted_gz), "--limit", "50", "--format", "json"])
+    moon_self_report = json.loads(moon_self_res.stdout.strip().splitlines()[-1])
+    assert int(moon_self_report["total"]) == go_self_total
+    assert any("WireReader::read_varint" in e["name"] for e in moon_self_report["entries"])
+    print(f"[V8 -> PPROF INTEROP OK] MoonBit self-profile converted to .pb.gz and verified by `go tool pprof` (total={go_self_total}ns)")
+
+
 def main():
     base_cpu = FIXTURES / "baseline-cpu.pb.gz"
     cand_cpu = FIXTURES / "candidate-cpu.pb.gz"
     base_heap = FIXTURES / "baseline-heap.pb.gz"
     cand_heap = FIXTURES / "candidate-heap.pb.gz"
-    for p in (base_cpu, cand_cpu, base_heap, cand_heap):
+    self_v8 = FIXTURES / "moonbit-self.cpuprofile"
+    for p in (base_cpu, cand_cpu, base_heap, cand_heap, self_v8):
         if not p.exists():
-            raise SystemExit(f"Missing fixture {p}; run `go run demo/gen_go_profiles.go` first.")
+            raise SystemExit(f"Missing fixture {p}")
     verify_single(base_cpu, expected_type="cpu", unit_flag="ns")
     verify_single(cand_cpu, expected_type="cpu", unit_flag="ns")
     verify_single(base_heap, sample_type="alloc_space", expected_type="alloc_space", unit_flag="B")
@@ -212,6 +258,7 @@ def main():
     verify_merge_oracle(base_cpu, cand_cpu)
     verify_diff(base_cpu, cand_cpu)
     verify_peek_and_callgraph(base_cpu, cand_cpu, cand_heap)
+    verify_prune_list_and_dogfood(cand_cpu, self_v8)
 
 
 if __name__ == "__main__":

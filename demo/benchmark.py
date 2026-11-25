@@ -126,9 +126,12 @@ def main() -> None:
 
     # Build native release CLI binary once so we benchmark pure binary execution, not moon compilation!
     subprocess.run(["moon", "build", "--target", "native", "--release", "cmd/main"], cwd=ROOT, check=True)
-    native_exe = ROOT / "_build" / "native" / "release" / "build" / "cmd" / "main" / ("main.exe" if sys.platform == "win32" else "main")
+    native_dir = ROOT / "_build" / "native" / "release" / "build" / "cmd" / "main"
+    native_exe = native_dir / "main.exe"
     if not native_exe.exists():
-        raise FileNotFoundError(f"Native release binary not found: {native_exe}")
+        native_exe = native_dir / "main"
+    if not native_exe.exists():
+        raise FileNotFoundError(f"Native release binary not found under: {native_dir}")
 
     rows = []
     for n in sizes:

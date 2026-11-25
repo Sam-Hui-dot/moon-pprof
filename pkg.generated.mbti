@@ -7,9 +7,15 @@ import {
 }
 
 // Values
+pub fn build_callgraph(Profile, sample_type? : String, max_nodes? : Int32, min_node_pct? : Double, min_edge_pct? : Double, filter? : String, spec? : FilterSpec?) -> CallGraph raise PprofError
+
+pub fn build_diff_callgraph(Profile, Profile, sample_type? : String, max_nodes? : Int32, min_node_pct? : Double, normalize? : Bool, filter? : String, spec? : FilterSpec?) -> DiffCallGraph raise PprofError
+
 pub fn collapse_stacks(Profile, sample_type? : String, filter? : String, spec? : FilterSpec?) -> Array[FoldedStack] raise PprofError
 
 pub fn compare_profiles(Profile, Profile, sample_type? : String, policy? : GatePolicy, limit? : Int32, filter? : String, spec? : FilterSpec?) -> DiffReport raise PprofError
+
+pub fn compute_peek(Profile, String, sample_type? : String, filter? : String, spec? : FilterSpec?) -> PeekReport raise PprofError
 
 pub fn compute_top(Profile, sample_type? : String, sort_by? : SortBy, limit? : Int32, filter? : String, spec? : FilterSpec?) -> TopReport raise PprofError
 
@@ -31,6 +37,14 @@ pub fn is_gzip(Bytes) -> Bool
 
 pub fn merge_profiles(Array[Profile]) -> Profile raise PprofError
 
+pub fn render_callgraph_dot(CallGraph) -> String
+
+pub fn render_callgraph_svg(CallGraph, title? : String) -> String
+
+pub fn render_diff_callgraph_dot(DiffCallGraph) -> String
+
+pub fn render_diff_callgraph_svg(DiffCallGraph, title? : String) -> String
+
 pub fn render_diff_flamegraph_svg(Profile, Profile, sample_type? : String, title? : String, width? : Int32, min_width_px? : Double, normalize? : Bool, filter? : String, spec? : FilterSpec?) -> String raise PprofError
 
 pub fn render_diff_html(Profile, Profile, sample_type? : String, title? : String, policy? : GatePolicy, limit? : Int32, filter? : String, spec? : FilterSpec?) -> String raise PprofError
@@ -43,11 +57,17 @@ pub fn render_flamegraph_svg(Profile, sample_type? : String, title? : String, wi
 
 pub fn render_folded(Array[FoldedStack]) -> String
 
-pub fn render_interactive_html(String, String, String) -> String
+pub fn render_interactive_html(String, String, String, callgraph_svg? : String) -> String
 
 pub fn render_label_markdown(LabelReport) -> String
 
 pub fn render_label_text(LabelReport) -> String
+
+pub fn render_multi_metric_html(Profile, title? : String, limit? : Int32, max_nodes? : Int32, filter? : String, spec? : FilterSpec?) -> String raise PprofError
+
+pub fn render_peek_markdown(PeekReport) -> String
+
+pub fn render_peek_text(PeekReport) -> String
 
 pub fn render_top_html(Profile, sample_type? : String, title? : String, limit? : Int32, filter? : String, spec? : FilterSpec?) -> String raise PprofError
 
@@ -74,6 +94,99 @@ pub fn PprofError::not_equal(Self, Self) -> Bool
 pub fn PprofError::to_repr(Self) -> @debug.Repr
 
 // Types and methods
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct CallGraph {
+  sample_type : String
+  unit : String
+  total : Int64
+  shown_total : Int64
+  nodes : Array[CallGraphNode]
+  edges : Array[CallGraphEdge]
+}
+pub fn CallGraph::equal(Self, Self) -> Bool
+pub fn CallGraph::not_equal(Self, Self) -> Bool
+pub fn CallGraph::to_json(Self) -> @json.Json
+pub fn CallGraph::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct CallGraphEdge {
+  from_id : Int32
+  to_id : Int32
+  caller : String
+  callee : String
+  weight : Int64
+  weight_pct : Double
+  is_back_edge : Bool
+}
+pub fn CallGraphEdge::equal(Self, Self) -> Bool
+pub fn CallGraphEdge::not_equal(Self, Self) -> Bool
+pub fn CallGraphEdge::to_json(Self) -> @json.Json
+pub fn CallGraphEdge::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct CallGraphNode {
+  id : Int32
+  name : String
+  filename : String
+  flat : Int64
+  flat_pct : Double
+  cum : Int64
+  cum_pct : Double
+  layer : Int32
+}
+pub fn CallGraphNode::equal(Self, Self) -> Bool
+pub fn CallGraphNode::not_equal(Self, Self) -> Bool
+pub fn CallGraphNode::to_json(Self) -> @json.Json
+pub fn CallGraphNode::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct DiffCallGraph {
+  sample_type : String
+  unit : String
+  normalized : Bool
+  baseline_total : Int64
+  candidate_total : Int64
+  nodes : Array[DiffCallGraphNode]
+  edges : Array[DiffCallGraphEdge]
+}
+pub fn DiffCallGraph::equal(Self, Self) -> Bool
+pub fn DiffCallGraph::not_equal(Self, Self) -> Bool
+pub fn DiffCallGraph::to_json(Self) -> @json.Json
+pub fn DiffCallGraph::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct DiffCallGraphEdge {
+  from_id : Int32
+  to_id : Int32
+  caller : String
+  callee : String
+  baseline_weight : Int64
+  candidate_weight : Int64
+  delta_weight : Int64
+  is_back_edge : Bool
+}
+pub fn DiffCallGraphEdge::equal(Self, Self) -> Bool
+pub fn DiffCallGraphEdge::not_equal(Self, Self) -> Bool
+pub fn DiffCallGraphEdge::to_json(Self) -> @json.Json
+pub fn DiffCallGraphEdge::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct DiffCallGraphNode {
+  id : Int32
+  name : String
+  baseline_cum : Int64
+  candidate_cum : Int64
+  delta_cum : Int64
+  delta_cum_pct : Double
+  candidate_cum_pct : Double
+  classification : String
+  layer : Int32
+}
+pub fn DiffCallGraphNode::equal(Self, Self) -> Bool
+pub fn DiffCallGraphNode::not_equal(Self, Self) -> Bool
+pub fn DiffCallGraphNode::to_json(Self) -> @json.Json
+pub fn DiffCallGraphNode::to_repr(Self) -> @debug.Repr
+
 #derive(Eq, @debug.Debug, @json.ToJson)
 pub(all) struct DiffEntry {
   name : String
@@ -264,6 +377,47 @@ pub fn Mapping::equal(Self, Self) -> Bool
 pub fn Mapping::not_equal(Self, Self) -> Bool
 pub fn Mapping::to_json(Self) -> @json.Json
 pub fn Mapping::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct PeekEdge {
+  name : String
+  weight : Int64
+  pct : Double
+}
+pub fn PeekEdge::equal(Self, Self) -> Bool
+pub fn PeekEdge::not_equal(Self, Self) -> Bool
+pub fn PeekEdge::to_json(Self) -> @json.Json
+pub fn PeekEdge::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct PeekFunction {
+  name : String
+  filename : String
+  flat : Int64
+  flat_pct : Double
+  cum : Int64
+  cum_pct : Double
+  callers : Array[PeekEdge]
+  callees : Array[PeekEdge]
+}
+pub fn PeekFunction::equal(Self, Self) -> Bool
+pub fn PeekFunction::not_equal(Self, Self) -> Bool
+pub fn PeekFunction::to_json(Self) -> @json.Json
+pub fn PeekFunction::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct PeekReport {
+  pattern : String
+  sample_type : String
+  unit : String
+  total : Int64
+  shown_total : Int64
+  functions : Array[PeekFunction]
+}
+pub fn PeekReport::equal(Self, Self) -> Bool
+pub fn PeekReport::not_equal(Self, Self) -> Bool
+pub fn PeekReport::to_json(Self) -> @json.Json
+pub fn PeekReport::to_repr(Self) -> @debug.Repr
 
 #derive(Eq, @debug.Debug, @json.ToJson)
 pub(all) struct Profile {

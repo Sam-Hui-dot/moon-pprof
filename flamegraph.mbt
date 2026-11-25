@@ -406,30 +406,43 @@ pub fn render_diff_flamegraph_svg(
 }
 
 ///|
-/// Render a self-contained offline interactive HTML report with flamegraph search, zoom, and summary table.
+/// Render a self-contained offline interactive HTML report with flamegraph search, zoom, optional callgraph view, and summary table.
 pub fn render_interactive_html(
   title : String,
   svg : String,
   summary_html : String,
+  callgraph_svg~ : String = "",
 ) -> String {
+  let has_cg = !callgraph_svg.is_empty()
   let out = StringBuilder()
   out.write_string(
     "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n",
   )
   out.write_string("<title>\{xml_escape(title)}</title>\n")
   out.write_string(
-    "<style>body{margin:0;padding:20px;font-family:system-ui,-apple-system,sans-serif;background:#f3f4f6;color:#111827} .card{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;margin-bottom:16px;box-shadow:0 1px 2px rgba(0,0,0,0.04)} .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px} input{padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;min-width:260px;font-family:ui-monospace,monospace} button{padding:6px 12px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer} button:hover{background:#f9fafb} .fg-frame{cursor:pointer} .fg-frame.matched rect{stroke:#7c3aed;stroke-width:1.8} .fg-frame.dimmed{opacity:0.25} table{width:100%;border-collapse:collapse;font-size:13px} th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #e5e7eb} th{background:#f9fafb;font-weight:600} code{font-family:ui-monospace,monospace;font-size:12px} .badge-reg{color:#b91c1c;font-weight:600} .badge-imp{color:#1d4ed8;font-weight:600}</style>\n",
+    "<style>body{margin:0;padding:20px;font-family:system-ui,-apple-system,sans-serif;background:#f3f4f6;color:#111827} .card{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;margin-bottom:16px;box-shadow:0 1px 2px rgba(0,0,0,0.04)} .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px} input{padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;min-width:260px;font-family:ui-monospace,monospace} button{padding:6px 12px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer} button:hover{background:#f9fafb} button.tab-active{background:#111827;color:#fff;border-color:#111827} .fg-frame{cursor:pointer} .fg-frame.matched rect{stroke:#7c3aed;stroke-width:1.8} .fg-frame.dimmed{opacity:0.25} table{width:100%;border-collapse:collapse;font-size:13px} th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #e5e7eb} th{background:#f9fafb;font-weight:600} code{font-family:ui-monospace,monospace;font-size:12px} .badge-reg{color:#b91c1c;font-weight:600} .badge-imp{color:#1d4ed8;font-weight:600}</style>\n",
   )
   out.write_string("</head>\n<body>\n<div class=\"card\">\n")
+  out.write_string("<div class=\"toolbar\">")
+  if has_cg {
+    out.write_string(
+      "<button id=\"tab-fg\" class=\"tab-active\">Flamegraph</button><button id=\"tab-cg\">Callgraph</button>",
+    )
+  }
   out.write_string(
-    "<div class=\"toolbar\"><input id=\"q\" placeholder=\"Search function name...\" /><button id=\"reset\">Reset Zoom</button><span id=\"status\" style=\"font-size:12px;color:#4b5563\">Click any frame to zoom.</span></div>\n",
+    "<input id=\"q\" placeholder=\"Search function name...\" /><button id=\"reset\">Reset Zoom</button><span id=\"status\" style=\"font-size:12px;color:#4b5563\">Click any frame to zoom.</span></div>\n",
   )
-  out.write_string(svg)
+  out.write_string("<div id=\"pane-fg\">\{svg}</div>\n")
+  if has_cg {
+    out.write_string(
+      "<div id=\"pane-cg\" style=\"display:none;overflow-x:auto\">\{callgraph_svg}</div>\n",
+    )
+  }
   out.write_string("</div>\n<div class=\"card\">\n")
   out.write_string(summary_html)
   out.write_string("</div>\n<script>\n")
   out.write_string(
-    "(function(){const svg=document.querySelector('.moon-pprof-svg');if(!svg)return;const frames=[...svg.querySelectorAll('.fg-frame')];const orig=frames.map(f=>({el:f,x:+f.dataset.x,w:+f.dataset.w,d:+f.dataset.depth,name:f.dataset.name.toLowerCase(),val:+f.dataset.val}));const root=orig[0];const q=document.getElementById('q');const st=document.getElementById('status');function applyZoom(target){const tx=target?target.x:root.x;const tw=target?target.w:root.w;const td=target?target.d:0;const scale=root.w/tw;orig.forEach(o=>{const r=o.el.querySelector('rect');const t=o.el.querySelector('text');if(o.x+o.w<=tx||o.x>=tx+tw){o.el.style.display='none';return;}o.el.style.display='';const nx=root.x+(o.x-tx)*scale;const nw=Math.max(0.5,o.w*scale-0.6);r.setAttribute('x',nx.toFixed(2));r.setAttribute('width',nw.toFixed(2));if(t){t.setAttribute('x',(nx+4).toFixed(2));t.style.display=nw<28?'none':'';}o.el.classList.toggle('dimmed',o.d<td);});st.textContent=target?'Zoomed: '+target.el.dataset.name+' ('+target.val+')':'Click any frame to zoom.';}orig.forEach(o=>o.el.addEventListener('click',()=>applyZoom(o)));document.getElementById('reset').addEventListener('click',()=>applyZoom(null));q.addEventListener('input',()=>{const term=q.value.trim().toLowerCase();let hits=0;orig.forEach(o=>{const m=term!==''&&o.name.includes(term);o.el.classList.toggle('matched',m);if(m)hits++;});st.textContent=term?('Matched frames: '+hits):'Click any frame to zoom.';});})();\n",
+    "(function(){const tf=document.getElementById('tab-fg'),tc=document.getElementById('tab-cg'),pf=document.getElementById('pane-fg'),pc=document.getElementById('pane-cg');if(tf&&tc&&pf&&pc){tf.addEventListener('click',()=>{tf.classList.add('tab-active');tc.classList.remove('tab-active');pf.style.display='';pc.style.display='none';});tc.addEventListener('click',()=>{tc.classList.add('tab-active');tf.classList.remove('tab-active');pc.style.display='';pf.style.display='none';});}const svg=document.querySelector('.moon-pprof-svg');if(!svg)return;const frames=[...svg.querySelectorAll('.fg-frame')];const orig=frames.map(f=>({el:f,x:+f.dataset.x,w:+f.dataset.w,d:+f.dataset.depth,name:f.dataset.name.toLowerCase(),val:+f.dataset.val}));const root=orig[0];const q=document.getElementById('q');const st=document.getElementById('status');function applyZoom(target){const tx=target?target.x:root.x;const tw=target?target.w:root.w;const td=target?target.d:0;const scale=root.w/tw;orig.forEach(o=>{const r=o.el.querySelector('rect');const t=o.el.querySelector('text');if(o.x+o.w<=tx||o.x>=tx+tw){o.el.style.display='none';return;}o.el.style.display='';const nx=root.x+(o.x-tx)*scale;const nw=Math.max(0.5,o.w*scale-0.6);r.setAttribute('x',nx.toFixed(2));r.setAttribute('width',nw.toFixed(2));if(t){t.setAttribute('x',(nx+4).toFixed(2));t.style.display=nw<28?'none':'';}o.el.classList.toggle('dimmed',o.d<td);});st.textContent=target?'Zoomed: '+target.el.dataset.name+' ('+target.val+')':'Click any frame to zoom.';}orig.forEach(o=>o.el.addEventListener('click',()=>applyZoom(o)));document.getElementById('reset').addEventListener('click',()=>applyZoom(null));q.addEventListener('input',()=>{const term=q.value.trim().toLowerCase();let hits=0;orig.forEach(o=>{const m=term!==''&&o.name.includes(term);o.el.classList.toggle('matched',m);if(m)hits++;});st.textContent=term?('Matched frames: '+hits):'Click any frame to zoom.';});})();\n",
   )
   out.write_string("</script>\n</body>\n</html>\n")
   out.to_string()
@@ -454,6 +467,8 @@ pub fn render_top_html(
     spec~,
   )
   let svg = render_flamegraph_svg(profile, sample_type~, title~, filter~, spec~)
+  let cg = build_callgraph(profile, sample_type~, filter~, spec~)
+  let callgraph_svg = render_callgraph_svg(cg, title="\{title} (Callgraph)")
   let tbl = StringBuilder()
   tbl.write_string(
     "<h3>Top Functions (\{xml_escape(top.sample_type)} / \{xml_escape(top.unit)})</h3>\n",
@@ -467,7 +482,7 @@ pub fn render_top_html(
     )
   }
   tbl.write_string("</tbody></table>\n")
-  render_interactive_html(title, svg, tbl.to_string())
+  render_interactive_html(title, svg, tbl.to_string(), callgraph_svg~)
 }
 
 ///|
@@ -500,6 +515,18 @@ pub fn render_diff_html(
     filter~,
     spec~,
   )
+  let dcg = build_diff_callgraph(
+    baseline,
+    candidate,
+    sample_type~,
+    normalize=policy.normalize,
+    filter~,
+    spec~,
+  )
+  let callgraph_svg = render_diff_callgraph_svg(
+    dcg,
+    title="\{title} (Callgraph)",
+  )
   let tbl = StringBuilder()
   let verdict = if diff.gate.passed { "PASS" } else { "REGRESSION DETECTED" }
   tbl.write_string(
@@ -528,5 +555,5 @@ pub fn render_diff_html(
     )
   }
   tbl.write_string("</tbody></table>\n")
-  render_interactive_html(title, svg, tbl.to_string())
+  render_interactive_html(title, svg, tbl.to_string(), callgraph_svg~)
 }

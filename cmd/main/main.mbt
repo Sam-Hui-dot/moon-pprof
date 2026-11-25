@@ -5,8 +5,12 @@ let usage : String =
   #|moon-pprof flamegraph <FILE> [--sample-type NAME] [--title TEXT] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--filter TEXT] [--html] [--all-metrics] [--out FILE]
   #|moon-pprof callgraph <FILE> [--diff <CANDIDATE>] [--sample-type NAME] [--normalize] [--max-nodes N] [--min-node-pct P] [--title TEXT] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--format svg|dot|json] [--out FILE]
   #|moon-pprof peek <FILE> [--pattern SUBSTR] [--sample-type NAME] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--format text|json|md] [--out FILE]
+  #|moon-pprof list <FILE> [--pattern SUBSTR] [--source-file PATH] [--sample-type NAME] [--limit N] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--format text|json|md] [--out FILE]
+  #|moon-pprof traces <FILE> [--sample-type NAME] [--limit N] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--format text|json|md] [--out FILE]
   #|moon-pprof diff <BASE> <CANDIDATE> [--sample-type NAME] [--normalize] [--max-total-pct P] [--max-func-pct P] [--min-delta V] [--limit N] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--filter TEXT] [--format text|json|md] [--out FILE] [--flamegraph-out FILE] [--html-out FILE]
   #|moon-pprof merge <FILE1> <FILE2> [FILE...] --out <MERGED.pb.gz> [--raw]
+  #|moon-pprof prune <FILE> [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] --out <PRUNED.pb.gz> [--raw]
+  #|moon-pprof convert <FILE> [--from auto|v8|folded|perf] [--sample-type NAME] [--unit UNIT] --out <OUT.pb.gz> [--raw]
   #|moon-pprof labels <FILE> --key <LABEL_KEY> [--sample-type NAME] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--format text|json|md] [--out FILE]
 
 ///|
@@ -71,7 +75,7 @@ fn parse_label_kv(raw : String) -> (String, String) {
 ///|
 async fn load_profile(path : String) -> @moon-pprof.Profile {
   let bytes = @fs.read_file(path).binary()
-  @moon-pprof.decode_profile(bytes)
+  @moon-pprof.decode_any_profile(bytes)
 }
 
 ///|
@@ -820,6 +824,323 @@ async fn cmd_peek(args : Array[String]) -> Int32 {
 }
 
 ///|
+async fn cmd_list(args : Array[String]) -> Int32 {
+  guard args.length() >= 2 else {
+    raise @moon-pprof.PprofError::InvalidInput(usage)
+  }
+  let file = args[1]
+  let mut pattern = ""
+  let mut source_file : String? = None
+  let mut sample_type = ""
+  let mut limit = 50
+  let mut focus = ""
+  let mut ignore_pattern = ""
+  let mut hide = ""
+  let mut label_key = ""
+  let mut label_value = ""
+  let mut format = "text"
+  let mut out_path : String? = None
+  let mut i = 2
+  while i < args.length() {
+    match args[i] {
+      "--pattern" => {
+        pattern = next_flag_value(args, i, "--pattern")
+        i += 2
+      }
+      "--source-file" => {
+        source_file = Some(next_flag_value(args, i, "--source-file"))
+        i += 2
+      }
+      "--sample-type" => {
+        sample_type = next_flag_value(args, i, "--sample-type")
+        i += 2
+      }
+      "--limit" => {
+        limit = parse_int_arg("--limit", next_flag_value(args, i, "--limit"))
+        i += 2
+      }
+      "--focus" | "--filter" => {
+        focus = next_flag_value(args, i, args[i])
+        i += 2
+      }
+      "--ignore" => {
+        ignore_pattern = next_flag_value(args, i, "--ignore")
+        i += 2
+      }
+      "--hide" => {
+        hide = next_flag_value(args, i, "--hide")
+        i += 2
+      }
+      "--label" => {
+        let (k, v) = parse_label_kv(next_flag_value(args, i, "--label"))
+        label_key = k
+        label_value = v
+        i += 2
+      }
+      "--format" => {
+        format = next_flag_value(args, i, "--format")
+        i += 2
+      }
+      "--out" => {
+        out_path = Some(next_flag_value(args, i, "--out"))
+        i += 2
+      }
+      other =>
+        raise @moon-pprof.PprofError::InvalidInput("unknown option: \{other}")
+    }
+  }
+  let profile = load_profile(file)
+  let spec = Some(
+    @moon-pprof.filter_spec(
+      focus~,
+      ignore_pattern~,
+      hide~,
+      label_key~,
+      label_value~,
+    ),
+  )
+  let report = @moon-pprof.compute_line_hotspots(
+    profile,
+    pattern~,
+    sample_type~,
+    limit~,
+    spec~,
+  )
+  let rendered = match source_file {
+    Some(src_path) => {
+      let src_text = @fs.read_file(src_path).text()
+      @moon-pprof.render_annotated_source(
+        report,
+        src_text,
+        filename_hint=src_path,
+      )
+    }
+    None =>
+      match format {
+        "text" => @moon-pprof.render_lines_text(report)
+        "json" => @json.ToJson::to_json(report).stringify()
+        "md" | "markdown" => @moon-pprof.render_lines_markdown(report)
+        _ =>
+          raise @moon-pprof.PprofError::InvalidInput(
+            "unsupported --format value: \{format}",
+          )
+      }
+  }
+  emit_output(rendered, out_path)
+  0
+}
+
+///|
+async fn cmd_traces(args : Array[String]) -> Int32 {
+  guard args.length() >= 2 else {
+    raise @moon-pprof.PprofError::InvalidInput(usage)
+  }
+  let file = args[1]
+  let mut sample_type = ""
+  let mut limit = 25
+  let mut focus = ""
+  let mut ignore_pattern = ""
+  let mut hide = ""
+  let mut label_key = ""
+  let mut label_value = ""
+  let mut format = "text"
+  let mut out_path : String? = None
+  let mut i = 2
+  while i < args.length() {
+    match args[i] {
+      "--sample-type" => {
+        sample_type = next_flag_value(args, i, "--sample-type")
+        i += 2
+      }
+      "--limit" => {
+        limit = parse_int_arg("--limit", next_flag_value(args, i, "--limit"))
+        i += 2
+      }
+      "--focus" | "--filter" => {
+        focus = next_flag_value(args, i, args[i])
+        i += 2
+      }
+      "--ignore" => {
+        ignore_pattern = next_flag_value(args, i, "--ignore")
+        i += 2
+      }
+      "--hide" => {
+        hide = next_flag_value(args, i, "--hide")
+        i += 2
+      }
+      "--label" => {
+        let (k, v) = parse_label_kv(next_flag_value(args, i, "--label"))
+        label_key = k
+        label_value = v
+        i += 2
+      }
+      "--format" => {
+        format = next_flag_value(args, i, "--format")
+        i += 2
+      }
+      "--out" => {
+        out_path = Some(next_flag_value(args, i, "--out"))
+        i += 2
+      }
+      other =>
+        raise @moon-pprof.PprofError::InvalidInput("unknown option: \{other}")
+    }
+  }
+  let profile = load_profile(file)
+  let spec = Some(
+    @moon-pprof.filter_spec(
+      focus~,
+      ignore_pattern~,
+      hide~,
+      label_key~,
+      label_value~,
+    ),
+  )
+  let report = @moon-pprof.compute_traces(profile, sample_type~, limit~, spec~)
+  let rendered = match format {
+    "text" => @moon-pprof.render_traces_text(report)
+    "json" => @json.ToJson::to_json(report).stringify()
+    "md" | "markdown" => @moon-pprof.render_traces_markdown(report)
+    _ =>
+      raise @moon-pprof.PprofError::InvalidInput(
+        "unsupported --format value: \{format}",
+      )
+  }
+  emit_output(rendered, out_path)
+  0
+}
+
+///|
+async fn cmd_prune(args : Array[String]) -> Int32 {
+  guard args.length() >= 2 else {
+    raise @moon-pprof.PprofError::InvalidInput(usage)
+  }
+  let file = args[1]
+  let mut focus = ""
+  let mut ignore_pattern = ""
+  let mut hide = ""
+  let mut label_key = ""
+  let mut label_value = ""
+  let mut out_path : String? = None
+  let mut gzip = true
+  let mut i = 2
+  while i < args.length() {
+    match args[i] {
+      "--focus" | "--filter" => {
+        focus = next_flag_value(args, i, args[i])
+        i += 2
+      }
+      "--ignore" => {
+        ignore_pattern = next_flag_value(args, i, "--ignore")
+        i += 2
+      }
+      "--hide" => {
+        hide = next_flag_value(args, i, "--hide")
+        i += 2
+      }
+      "--label" => {
+        let (k, v) = parse_label_kv(next_flag_value(args, i, "--label"))
+        label_key = k
+        label_value = v
+        i += 2
+      }
+      "--out" => {
+        out_path = Some(next_flag_value(args, i, "--out"))
+        i += 2
+      }
+      "--raw" => {
+        gzip = false
+        i += 1
+      }
+      other =>
+        raise @moon-pprof.PprofError::InvalidInput("unknown option: \{other}")
+    }
+  }
+  guard out_path is Some(dest) else {
+    raise @moon-pprof.PprofError::InvalidInput("prune requires --out <FILE>")
+  }
+  let profile = load_profile(file)
+  let spec = @moon-pprof.filter_spec(
+    focus~,
+    ignore_pattern~,
+    hide~,
+    label_key~,
+    label_value~,
+  )
+  let pruned = @moon-pprof.prune_profile(profile, spec)
+  let encoded = @moon-pprof.encode_profile(pruned, gzip~)
+  @fs.write_file(dest, encoded, create_mode=CreateOrTruncate)
+  println(
+    "pruned \{file} -> \{dest} (\{profile.samples.length()} -> \{pruned.samples.length()} samples, \{profile.functions.length()} -> \{pruned.functions.length()} functions, \{encoded.length()} bytes)",
+  )
+  0
+}
+
+///|
+async fn cmd_convert(args : Array[String]) -> Int32 {
+  guard args.length() >= 2 else {
+    raise @moon-pprof.PprofError::InvalidInput(usage)
+  }
+  let file = args[1]
+  let mut from_fmt = "auto"
+  let mut sample_type = "samples"
+  let mut unit = "count"
+  let mut out_path : String? = None
+  let mut gzip = true
+  let mut i = 2
+  while i < args.length() {
+    match args[i] {
+      "--from" => {
+        from_fmt = next_flag_value(args, i, "--from")
+        i += 2
+      }
+      "--sample-type" => {
+        sample_type = next_flag_value(args, i, "--sample-type")
+        i += 2
+      }
+      "--unit" => {
+        unit = next_flag_value(args, i, "--unit")
+        i += 2
+      }
+      "--out" => {
+        out_path = Some(next_flag_value(args, i, "--out"))
+        i += 2
+      }
+      "--raw" => {
+        gzip = false
+        i += 1
+      }
+      other =>
+        raise @moon-pprof.PprofError::InvalidInput("unknown option: \{other}")
+    }
+  }
+  guard out_path is Some(dest) else {
+    raise @moon-pprof.PprofError::InvalidInput("convert requires --out <FILE>")
+  }
+  let profile = match from_fmt {
+    "auto" => load_profile(file)
+    "v8" => @moon-pprof.from_v8_cpuprofile(@fs.read_file(file).text())
+    "folded" =>
+      @moon-pprof.from_folded_stacks(
+        @fs.read_file(file).text(),
+        sample_type~,
+        unit~,
+      )
+    "perf" => @moon-pprof.from_perf_script(@fs.read_file(file).text())
+    _ =>
+      raise @moon-pprof.PprofError::InvalidInput(
+        "unsupported --from format: \{from_fmt} (expected auto, v8, folded, or perf)",
+      )
+  }
+  let encoded = @moon-pprof.encode_profile(profile, gzip~)
+  @fs.write_file(dest, encoded, create_mode=CreateOrTruncate)
+  println(
+    "converted \{file} (\{from_fmt}) -> \{dest} (\{profile.samples.length()} samples, \{profile.functions.length()} functions, \{encoded.length()} bytes)",
+  )
+  0
+}
+
+///|
 async fn run(args : Array[String]) -> Int32 {
   match args.get(0) {
     Some("top") => cmd_top(args)
@@ -827,8 +1148,12 @@ async fn run(args : Array[String]) -> Int32 {
     Some("flamegraph") => cmd_flamegraph(args)
     Some("callgraph") => cmd_callgraph(args)
     Some("peek") => cmd_peek(args)
+    Some("list") => cmd_list(args)
+    Some("traces") => cmd_traces(args)
     Some("diff") => cmd_diff(args)
     Some("merge") => cmd_merge(args)
+    Some("prune") => cmd_prune(args)
+    Some("convert") => cmd_convert(args)
     Some("labels") => cmd_labels(args)
     _ => raise @moon-pprof.PprofError::InvalidInput(usage)
   }

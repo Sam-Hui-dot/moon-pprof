@@ -3,16 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>moon-pprof — Zero-Upload Browser pprof Analyzer (Powered by MoonBit)</title>
+<title>moon-pprof — Universal Zero-Upload Browser Profiler (Powered by MoonBit)</title>
 <style>
-  :root { --bg:#f4f5f7; --card:#ffffff; --border:#e5e7eb; --text:#111827; --muted:#4b5563; --accent:#111827; --reg:#b91c1c; --imp:#1d4ed8; }
+  :root { --bg:#f4f5f7; --card:#ffffff; --border:#e5e7eb; --text:#111827; --muted:#4b5563; --accent:#111827; --reg:#b91c1c; --imp:#1d4ed8; --hi:#7c3aed; }
   * { box-sizing:border-box; }
   body { margin:0; padding:20px; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text); }
-  .wrap { max-width:1360px; margin:0 auto; }
+  .wrap { max-width:1380px; margin:0 auto; }
   header { display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:12px; margin-bottom:16px; }
   h1 { margin:0; font-size:22px; }
   .sub { font-size:13px; color:var(--muted); margin-top:4px; }
   .pill { display:inline-block; padding:3px 9px; border-radius:999px; font-size:11px; font-weight:600; background:#ecfdf5; color:#065f46; border:1px solid #a7f3d0; }
+  .pill-fmt { background:#eef2ff; color:#3730a3; border-color:#c7d2fe; margin-left:6px; }
   .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; margin-bottom:16px; box-shadow:0 1px 2px rgba(0,0,0,0.03); }
   .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
   @media (max-width:780px){ .grid2 { grid-template-columns:1fr; } }
@@ -30,8 +31,8 @@
   .status { font-size:12px; color:var(--muted); margin-top:8px; font-family:ui-monospace,Consolas,monospace; }
   .err { color:var(--reg); font-weight:600; }
   .viz { overflow-x:auto; border:1px solid var(--border); border-radius:8px; background:#fafafa; padding:8px; min-height:140px; }
-  .fg-frame { cursor:pointer; }
-  .fg-frame.matched rect { stroke:#7c3aed; stroke-width:1.8; }
+  .fg-frame, .cg-node { cursor:pointer; }
+  .fg-frame.matched rect, .cg-node.matched rect { stroke:var(--hi); stroke-width:2.6; }
   .fg-frame.dimmed { opacity:0.25; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th, td { text-align:left; padding:7px 9px; border-bottom:1px solid var(--border); }
@@ -46,44 +47,46 @@
 <div class="wrap">
   <header>
     <div>
-      <h1>moon-pprof <span class="pill">100% Client-Side / Zero Upload</span></h1>
-      <div class="sub">Pure MoonBit Google <code>profile.proto</code> decoder, differential analyzer, Flamegraph &amp; layered Callgraph renderer running locally in your browser.</div>
+      <h1>moon-pprof <span class="pill">100% Client-Side / Zero Upload</span><span class="pill pill-fmt" id="fmt-badge" style="display:none"></span></h1>
+      <div class="sub">Pure MoonBit universal profiler: <code>.pb.gz</code> / <code>.pb</code> / V8 <code>.cpuprofile</code> (MoonBit JS &amp; Node) / Linux <code>perf script</code> / <code>folded</code> — Flamegraph, layered Callgraph, Line Hotspots, Traces &amp; Prune Export.</div>
     </div>
     <div class="row" style="margin-top:0">
-      <button id="demo-cpu-diff">Load Go CPU Diff Demo</button>
-      <button id="demo-heap-diff">Load Go Heap Diff Demo</button>
-      <button id="demo-heap-single">Load Go Heap Single Demo</button>
+      <button id="demo-mbt-self" class="primary">MoonBit Self-Profile (.cpuprofile)</button>
+      <button id="demo-cpu-diff">Go CPU Diff</button>
+      <button id="demo-heap-diff">Go Heap Diff</button>
+      <button id="demo-heap-single">Go Heap 4-Metric</button>
     </div>
   </header>
 
   <div class="card">
     <div class="grid2">
       <div class="drop" id="drop-base">
-        <strong>Baseline / Single Profile (<code>.pb.gz</code> or <code>.pb</code>)</strong>
+        <strong>Baseline / Single Profile (<code>.pb.gz</code>, <code>.pb</code>, <code>.cpuprofile</code>, <code>perf</code>, <code>folded</code>)</strong>
         <span id="base-label">Drop file here or click to select</span>
-        <input id="file-base" type="file" accept=".gz,.pb,.pprof" style="display:none">
+        <input id="file-base" type="file" accept=".gz,.pb,.pprof,.cpuprofile,.json,.txt,.folded,.perf" style="display:none">
       </div>
       <div class="drop" id="drop-cand">
         <strong>Candidate Profile (Optional — enables Differential Mode)</strong>
         <span id="cand-label">Drop second file to compare, or leave empty for single view</span>
-        <input id="file-cand" type="file" accept=".gz,.pb,.pprof" style="display:none">
+        <input id="file-cand" type="file" accept=".gz,.pb,.pprof,.cpuprofile,.json,.txt,.folded,.perf" style="display:none">
       </div>
     </div>
 
     <div class="row">
       <label style="font-size:12px;color:var(--muted)">Metric:</label>
       <select id="metric"></select>
-      <input id="focus" type="text" placeholder="focus (substring)" style="width:155px">
-      <input id="ignore" type="text" placeholder="ignore (substring)" style="width:155px">
-      <input id="hide" type="text" placeholder="hide (substring)" style="width:145px">
-      <input id="label" type="text" placeholder="label key=val" style="width:145px">
-      <label style="font-size:12px"><input id="normalize" type="checkbox"> Normalize diff</label>
-      <label style="font-size:12px;color:var(--muted)">Max CG nodes:</label>
-      <input id="max-nodes" type="number" value="30" min="5" max="100" style="width:68px">
+      <input id="focus" type="text" placeholder="focus (substring)" style="width:145px">
+      <input id="ignore" type="text" placeholder="ignore (substring)" style="width:145px">
+      <input id="hide" type="text" placeholder="hide (substring)" style="width:135px">
+      <input id="label" type="text" placeholder="label key=val" style="width:135px">
+      <label style="font-size:12px"><input id="normalize" type="checkbox"> Normalize</label>
+      <label style="font-size:12px;color:var(--muted)">CG nodes:</label>
+      <input id="max-nodes" type="number" value="30" min="5" max="100" style="width:62px">
       <button class="primary" id="run-btn">Analyze</button>
+      <button id="prune-dl-btn">Prune &amp; Export .pb.gz</button>
       <button id="clear-cand">Clear Candidate</button>
     </div>
-    <div class="status" id="status">Ready. Drop a .pb.gz profile or load a built-in Go demo above.</div>
+    <div class="status" id="status">Ready. Drop any .pb.gz / .cpuprofile / perf / folded file, or click a built-in demo above.</div>
   </div>
 
   <div class="card" id="output-card" style="display:none">
@@ -91,26 +94,30 @@
       <div class="row" style="margin-top:0">
         <button class="tab active" data-tab="fg">Flamegraph</button>
         <button class="tab" data-tab="cg">Callgraph</button>
-        <button class="tab" data-tab="tbl">Top / Diff Table</button>
-        <button class="tab" data-tab="peek">Peek Callers/Callees</button>
+        <button class="tab" data-tab="tbl">Top / Diff</button>
+        <button class="tab" data-tab="lines">Lines</button>
+        <button class="tab" data-tab="traces">Traces</button>
+        <button class="tab" data-tab="peek">Peek</button>
         <button class="tab" data-tab="md">Markdown / DOT</button>
       </div>
       <div class="row" style="margin-top:0">
-        <input id="fg-search" type="text" placeholder="Highlight frame..." style="width:170px">
+        <input id="fg-search" type="text" placeholder="Highlight frame / node..." style="width:185px">
         <button id="fg-reset">Reset Zoom</button>
-        <button id="dl-svg">Download Current SVG</button>
+        <button id="dl-svg">Download SVG</button>
       </div>
     </div>
 
     <div id="tab-fg" class="tab-pane"><div class="viz" id="fg-box"></div></div>
     <div id="tab-cg" class="tab-pane" style="display:none"><div class="viz" id="cg-box"></div></div>
     <div id="tab-tbl" class="tab-pane" style="display:none"><div id="tbl-box"></div></div>
+    <div id="tab-lines" class="tab-pane" style="display:none"><div id="lines-box"></div></div>
+    <div id="tab-traces" class="tab-pane" style="display:none"><div id="traces-box"></div></div>
     <div id="tab-peek" class="tab-pane" style="display:none">
       <div class="row" style="margin-top:0;margin-bottom:10px">
         <input id="peek-pat" type="text" placeholder="Function substring (e.g. main.)" style="width:240px">
         <button class="primary" id="peek-btn">Run Peek</button>
       </div>
-      <pre id="peek-box">Enter a function substring and click Run Peek.</pre>
+      <pre id="peek-box">Click any Callgraph node or enter a function substring and click Run Peek.</pre>
     </div>
     <div id="tab-md" class="tab-pane" style="display:none">
       <h4 style="margin:0 0 6px">Markdown Report</h4>
@@ -144,6 +151,13 @@
     return btoa(bin);
   }
 
+  function base64ToUint8Array(b64){
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for(let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return arr;
+  }
+
   function wireDrop(dropId, fileId, onLoad){
     const dz = $(dropId), fi = $(fileId);
     dz.addEventListener("click", () => fi.click());
@@ -165,6 +179,9 @@
   function populateMetrics(b64){
     const info = globalThis.MoonPprof.inspectProfile(b64);
     if(!info.ok){ setStatus("Decode error: " + info.error, true); return false; }
+    const badge = $("fmt-badge");
+    badge.textContent = "Format: " + info.format;
+    badge.style.display = "";
     const sel = $("metric");
     sel.innerHTML = "";
     info.metrics.forEach(m => {
@@ -174,37 +191,60 @@
       if(m.name === info.default_sample_type) opt.selected = true;
       sel.appendChild(opt);
     });
-    setStatus("Loaded profile: " + info.sample_count + " samples, " + info.function_count + " functions, " + info.metrics.length + " metric(s).");
+    setStatus("Detected " + info.format + ": " + info.sample_count + " samples, " + info.function_count + " functions, " + info.metrics.length + " metric(s).");
     return true;
   }
 
-  function bindFlamegraphZoom(){
+  function highlightBoth(term){
+    const t = term.trim().toLowerCase();
+    document.querySelectorAll(".fg-frame").forEach(el => {
+      el.classList.toggle("matched", t !== "" && (el.dataset.name || "").toLowerCase().includes(t));
+    });
+    document.querySelectorAll(".cg-node").forEach(el => {
+      el.classList.toggle("matched", t !== "" && (el.dataset.name || "").toLowerCase().includes(t));
+    });
+  }
+
+  function bindInteractiveSvg(){
     const svg = $("fg-box").querySelector(".moon-pprof-svg");
-    if(!svg) return;
-    const frames = [...svg.querySelectorAll(".fg-frame")];
-    const orig = frames.map(f => ({ el:f, x:+f.dataset.x, w:+f.dataset.w, d:+f.dataset.depth, name:f.dataset.name.toLowerCase(), val:+f.dataset.val }));
-    const root = orig[0];
-    function applyZoom(target){
-      const tx = target ? target.x : root.x, tw = target ? target.w : root.w, td = target ? target.d : 0;
-      const scale = root.w / tw;
-      orig.forEach(o => {
-        const r = o.el.querySelector("rect"), t = o.el.querySelector("text");
-        if(o.x + o.w <= tx || o.x >= tx + tw){ o.el.style.display = "none"; return; }
-        o.el.style.display = "";
-        const nx = root.x + (o.x - tx) * scale;
-        const nw = Math.max(0.5, o.w * scale - 0.6);
-        r.setAttribute("x", nx.toFixed(2));
-        r.setAttribute("width", nw.toFixed(2));
-        if(t){ t.setAttribute("x", (nx + 4).toFixed(2)); t.style.display = nw < 28 ? "none" : ""; }
-        o.el.classList.toggle("dimmed", o.d < td);
-      });
+    if(svg){
+      const frames = [...svg.querySelectorAll(".fg-frame")];
+      const orig = frames.map(f => ({ el:f, x:+f.dataset.x, w:+f.dataset.w, d:+f.dataset.depth, name:(f.dataset.name||"").toLowerCase(), val:+f.dataset.val }));
+      const root = orig[0];
+      function applyZoom(target){
+        const tx = target ? target.x : root.x, tw = target ? target.w : root.w, td = target ? target.d : 0;
+        const scale = root.w / tw;
+        orig.forEach(o => {
+          const r = o.el.querySelector("rect"), t = o.el.querySelector("text");
+          if(o.x + o.w <= tx || o.x >= tx + tw){ o.el.style.display = "none"; return; }
+          o.el.style.display = "";
+          const nx = root.x + (o.x - tx) * scale;
+          const nw = Math.max(0.5, o.w * scale - 0.6);
+          r.setAttribute("x", nx.toFixed(2));
+          r.setAttribute("width", nw.toFixed(2));
+          if(t){ t.setAttribute("x", (nx + 4).toFixed(2)); t.style.display = nw < 28 ? "none" : ""; }
+          o.el.classList.toggle("dimmed", o.d < td);
+        });
+        if(target && target.el.dataset.name && target.el.dataset.name !== "all"){
+          $("fg-search").value = target.el.dataset.name;
+          highlightBoth(target.el.dataset.name);
+        }
+      }
+      orig.forEach(o => o.el.addEventListener("click", () => applyZoom(o)));
+      $("fg-reset").onclick = () => { applyZoom(null); $("fg-search").value = ""; highlightBoth(""); };
     }
-    orig.forEach(o => o.el.addEventListener("click", () => applyZoom(o)));
-    $("fg-reset").onclick = () => applyZoom(null);
-    $("fg-search").oninput = () => {
-      const term = $("fg-search").value.trim().toLowerCase();
-      orig.forEach(o => o.el.classList.toggle("matched", term !== "" && o.name.includes(term)));
-    };
+    $("fg-search").oninput = () => highlightBoth($("fg-search").value);
+    // Bidirectional link: clicking a Callgraph node highlights across both SVGs and pre-fills Peek
+    document.querySelectorAll(".cg-node").forEach(nd => {
+      nd.addEventListener("click", () => {
+        const name = nd.dataset.name || "";
+        if(!name) return;
+        $("fg-search").value = name;
+        $("peek-pat").value = name;
+        highlightBoth(name);
+        setStatus("Linked selection: " + name + " (highlighted in Flamegraph & Callgraph; switch to Peek to inspect callers/callees).");
+      });
+    });
   }
 
   function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
@@ -229,9 +269,28 @@
     return html + "</tbody></table>";
   }
 
-  function runAnalyze(){
-    if(!globalThis.MoonPprof){ setStatus("moon-pprof.js failed to load. Run python demo/build_web.py first.", true); return; }
-    if(!baseB64){ setStatus("Please drop a profile or click a demo button first.", true); return; }
+  function renderLines(lr){
+    if(!lr || !lr.entries) return "<p>No source-line data available.</p>";
+    let html = "<p style='margin-top:0;font-size:13px'><strong>Source-Line Hotspots:</strong> <code>" + esc(lr.sample_type) + "</code> (" + esc(lr.unit) + "), top " + lr.entries.length + " lines</p>";
+    html += "<table><thead><tr><th>File : Line</th><th>Function</th><th>Flat</th><th>Flat %</th><th>Cum</th><th>Cum %</th></tr></thead><tbody>";
+    lr.entries.forEach(e => {
+      const loc = (e.filename || "<unknown>") + ":" + e.line;
+      html += "<tr><td><code>" + esc(loc) + "</code></td><td><code>" + esc(e.function_name) + "</code></td><td>" + esc(e.flat) + "</td><td>" + e.flat_pct + "%</td><td>" + esc(e.cum) + "</td><td>" + e.cum_pct + "%</td></tr>";
+    });
+    return html + "</tbody></table>";
+  }
+
+  function renderTraces(tr){
+    if(!tr || !tr.traces) return "<p>No traces available.</p>";
+    let html = "<p style='margin-top:0;font-size:13px'><strong>Top Critical Call Paths:</strong> <code>" + esc(tr.sample_type) + "</code> (" + esc(tr.unit) + "), total " + esc(tr.total) + "</p>";
+    html += "<table><thead><tr><th>#</th><th>Value</th><th>Share %</th><th>Cum %</th><th>Call Path (root &rarr; leaf)</th></tr></thead><tbody>";
+    tr.traces.forEach(t => {
+      html += "<tr><td>#" + t.rank + "</td><td>" + esc(t.value) + "</td><td>" + t.pct + "%</td><td>" + t.cumulative_pct + "%</td><td><code>" + esc(t.frames.join(" -> ")) + "</code></td></tr>";
+    });
+    return html + "</tbody></table>";
+  }
+
+  function currentOpts(){
     const rawLbl = $("label").value.trim();
     let labelKey = "", labelValue = "";
     if(rawLbl){
@@ -239,7 +298,7 @@
       if(idx >= 0){ labelKey = rawLbl.slice(0, idx); labelValue = rawLbl.slice(idx + 1); }
       else labelKey = rawLbl;
     }
-    const opts = {
+    return {
       sampleType: $("metric").value,
       normalize: $("normalize").checked,
       focus: $("focus").value.trim(),
@@ -249,6 +308,12 @@
       labelValue,
       maxNodes: parseInt($("max-nodes").value, 10) || 30
     };
+  }
+
+  function runAnalyze(){
+    if(!globalThis.MoonPprof){ setStatus("moon-pprof.js failed to load. Run python demo/build_web.py first.", true); return; }
+    if(!baseB64){ setStatus("Please drop a profile or click a demo button first.", true); return; }
+    const opts = currentOpts();
     const t0 = performance.now();
     const res = candB64
       ? globalThis.MoonPprof.compareProfiles(baseB64, candB64, opts)
@@ -260,9 +325,11 @@
     $("fg-box").innerHTML = res.flamegraph_svg;
     $("cg-box").innerHTML = res.callgraph_svg;
     $("tbl-box").innerHTML = renderTable(res);
+    $("lines-box").innerHTML = renderLines(res.lines);
+    $("traces-box").innerHTML = renderTraces(res.traces);
     $("md-box").textContent = res.markdown;
     $("dot-box").textContent = res.callgraph_dot;
-    bindFlamegraphZoom();
+    bindInteractiveSvg();
     setStatus((candB64 ? "Differential analysis" : "Single-profile analysis") + " completed locally in " + ms + " ms (metric: " + opts.sampleType + ").");
   }
 
@@ -283,6 +350,20 @@
     candB64 = "";
     $("cand-label").textContent = "Drop second file to compare, or leave empty for single view";
     if(baseB64) runAnalyze();
+  });
+
+  $("prune-dl-btn").addEventListener("click", () => {
+    const target = candB64 || baseB64;
+    if(!target || !globalThis.MoonPprof) return;
+    const res = globalThis.MoonPprof.pruneProfile(target, currentOpts());
+    if(!res.ok){ setStatus("Prune error: " + res.error, true); return; }
+    const bytes = base64ToUint8Array(res.pb_gz_b64);
+    const blob = new Blob([bytes], { type: "application/gzip" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "moon-pprof-pruned.pb.gz";
+    a.click();
+    setStatus("Pruned & re-encoded .pb.gz locally (" + res.before_samples + " -> " + res.after_samples + " samples, " + res.before_functions + " -> " + res.after_functions + " functions, " + res.byte_length + " bytes).");
   });
 
   document.querySelectorAll(".tab").forEach(btn => {
@@ -314,7 +395,10 @@
   });
 
   function loadDemo(baseKey, candKey, baseName, candName, preferredMetric){
-    if(!globalThis.MOON_PPROF_SAMPLES){ setStatus("samples.js not loaded. Run python demo/build_web.py.", true); return; }
+    if(!globalThis.MOON_PPROF_SAMPLES || !globalThis.MOON_PPROF_SAMPLES[baseKey]){
+      setStatus("Demo sample '" + baseKey + "' not loaded. Run python demo/build_web.py.", true);
+      return;
+    }
     baseB64 = globalThis.MOON_PPROF_SAMPLES[baseKey];
     candB64 = candKey ? globalThis.MOON_PPROF_SAMPLES[candKey] : "";
     $("base-label").textContent = "Demo: " + baseName;
@@ -325,6 +409,7 @@
     }
   }
 
+  $("demo-mbt-self").addEventListener("click", () => loadDemo("moonbit_self", "", "moonbit-self.cpuprofile (MoonBit JS dogfooding)", "", "cpu"));
   $("demo-cpu-diff").addEventListener("click", () => loadDemo("baseline_cpu", "candidate_cpu", "baseline-cpu.pb.gz", "candidate-cpu.pb.gz", "cpu"));
   $("demo-heap-diff").addEventListener("click", () => loadDemo("baseline_heap", "candidate_heap", "baseline-heap.pb.gz", "candidate-heap.pb.gz", "alloc_space"));
   $("demo-heap-single").addEventListener("click", () => loadDemo("candidate_heap", "", "candidate-heap.pb.gz", "", "alloc_space"));

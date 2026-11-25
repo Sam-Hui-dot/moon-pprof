@@ -43,6 +43,28 @@ fn decode_base64(input : String) -> Bytes raise @moon-pprof.PprofError {
 }
 
 ///|
+fn encode_base64(bytes : Bytes) -> String {
+  let alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".to_array()
+  let out = StringBuilder()
+  let n = bytes.length()
+  let mut i = 0
+  while i < n {
+    let b0 = bytes[i].to_int()
+    let has1 = i + 1 < n
+    let has2 = i + 2 < n
+    let b1 = if has1 { bytes[i + 1].to_int() } else { 0 }
+    let b2 = if has2 { bytes[i + 2].to_int() } else { 0 }
+    let triple = (b0 << 16) | (b1 << 8) | b2
+    out.write_char(alphabet[(triple >> 18) & 63])
+    out.write_char(alphabet[(triple >> 12) & 63])
+    out.write_char(if has1 { alphabet[(triple >> 6) & 63] } else { '=' })
+    out.write_char(if has2 { alphabet[triple & 63] } else { '=' })
+    i += 3
+  }
+  out.to_string()
+}
+
+///|
 fn json_err(err : Error) -> String {
   @json.Json::object({
     "ok": @json.ToJson::to_json(false),
@@ -70,11 +92,12 @@ fn collect_label_keys(
 }
 
 ///|
-/// Inspect a base64-encoded `.pb` or `.pb.gz` profile and return metadata as JSON.
+/// Inspect any base64-encoded profile (`.pb.gz`, `.pb`, V8 `.cpuprofile`, `perf script`, or `folded`).
 pub fn inspect_profile_b64(b64 : String) -> String {
   try {
     let bytes = decode_base64(b64)
-    let profile = @moon-pprof.decode_profile(bytes)
+    let fmt = @moon-pprof.detect_profile_format(bytes)
+    let profile = @moon-pprof.decode_any_profile(bytes)
     let types = @moon-pprof.sample_type_names(profile)
     let (_, default_name, _) = @moon-pprof.resolve_sample_type(profile)
     let label_keys = collect_label_keys(profile)
@@ -89,6 +112,7 @@ pub fn inspect_profile_b64(b64 : String) -> String {
     }
     @json.Json::object({
       "ok": @json.ToJson::to_json(true),
+      "format": @json.ToJson::to_json(fmt),
       "default_sample_type": @json.ToJson::to_json(default_name),
       "sample_count": @json.ToJson::to_json(profile.samples.length()),
       "function_count": @json.ToJson::to_json(profile.functions.length()),
@@ -102,7 +126,7 @@ pub fn inspect_profile_b64(b64 : String) -> String {
 }
 
 ///|
-/// Analyze a single base64-encoded profile and return Top, Flamegraph SVG, Callgraph SVG/DOT, Markdown, and optional Label breakdown.
+/// Analyze a single profile in any supported format and return Top, Flamegraph, Callgraph, Lines, Traces, and Markdown.
 pub fn analyze_profile_b64(
   b64 : String,
   sample_type : String,
@@ -115,7 +139,8 @@ pub fn analyze_profile_b64(
 ) -> String {
   try {
     let bytes = decode_base64(b64)
-    let profile = @moon-pprof.decode_profile(bytes)
+    let fmt = @moon-pprof.detect_profile_format(bytes)
+    let profile = @moon-pprof.decode_any_profile(bytes)
     let spec = Some(
       @moon-pprof.filter_spec(
         focus~,
@@ -149,6 +174,18 @@ pub fn analyze_profile_b64(
       title="Callgraph (\{top.sample_type})",
     )
     let cg_dot = @moon-pprof.render_callgraph_dot(cg)
+    let lines = @moon-pprof.compute_line_hotspots(
+      profile,
+      sample_type~,
+      limit=50,
+      spec~,
+    )
+    let traces = @moon-pprof.compute_traces(
+      profile,
+      sample_type~,
+      limit=25,
+      spec~,
+    )
     let md = @moon-pprof.render_top_markdown(top)
     let label_json : @json.Json = if !label_key.is_empty() {
       let lr = @moon-pprof.group_by_label(
@@ -163,10 +200,13 @@ pub fn analyze_profile_b64(
     }
     @json.Json::object({
       "ok": @json.ToJson::to_json(true),
+      "format": @json.ToJson::to_json(fmt),
       "top": @json.ToJson::to_json(top),
       "flamegraph_svg": @json.ToJson::to_json(fg_svg),
       "callgraph_svg": @json.ToJson::to_json(cg_svg),
       "callgraph_dot": @json.ToJson::to_json(cg_dot),
+      "lines": @json.ToJson::to_json(lines),
+      "traces": @json.ToJson::to_json(traces),
       "markdown": @json.ToJson::to_json(md),
       "label_report": label_json,
     }).stringify()
@@ -176,7 +216,7 @@ pub fn analyze_profile_b64(
 }
 
 ///|
-/// Compare two base64-encoded profiles and return DiffReport, Diff Flamegraph SVG, Diff Callgraph SVG/DOT, and Markdown.
+/// Compare two profiles in any supported format and return DiffReport, Diff Flamegraph, Diff Callgraph, Lines, Traces, and Markdown.
 pub fn compare_profiles_b64(
   base_b64 : String,
   cand_b64 : String,
@@ -190,8 +230,8 @@ pub fn compare_profiles_b64(
   max_nodes : Int32,
 ) -> String {
   try {
-    let base = @moon-pprof.decode_profile(decode_base64(base_b64))
-    let cand = @moon-pprof.decode_profile(decode_base64(cand_b64))
+    let base = @moon-pprof.decode_any_profile(decode_base64(base_b64))
+    let cand = @moon-pprof.decode_any_profile(decode_base64(cand_b64))
     let spec = Some(
       @moon-pprof.filter_spec(
         focus~,
@@ -231,6 +271,13 @@ pub fn compare_profiles_b64(
       title="Differential Callgraph (\{diff.sample_type})",
     )
     let cg_dot = @moon-pprof.render_diff_callgraph_dot(dcg)
+    let lines = @moon-pprof.compute_line_hotspots(
+      cand,
+      sample_type~,
+      limit=50,
+      spec~,
+    )
+    let traces = @moon-pprof.compute_traces(cand, sample_type~, limit=25, spec~)
     let md = @moon-pprof.render_diff_markdown(diff)
     @json.Json::object({
       "ok": @json.ToJson::to_json(true),
@@ -238,6 +285,8 @@ pub fn compare_profiles_b64(
       "flamegraph_svg": @json.ToJson::to_json(fg_svg),
       "callgraph_svg": @json.ToJson::to_json(cg_svg),
       "callgraph_dot": @json.ToJson::to_json(cg_dot),
+      "lines": @json.ToJson::to_json(lines),
+      "traces": @json.ToJson::to_json(traces),
       "markdown": @json.ToJson::to_json(md),
     }).stringify()
   } catch {
@@ -246,7 +295,7 @@ pub fn compare_profiles_b64(
 }
 
 ///|
-/// Compute callers/callees peek view for a base64-encoded profile.
+/// Compute callers/callees peek view for a profile in any supported format.
 pub fn peek_profile_b64(
   b64 : String,
   pattern : String,
@@ -254,7 +303,7 @@ pub fn peek_profile_b64(
   focus : String,
 ) -> String {
   try {
-    let profile = @moon-pprof.decode_profile(decode_base64(b64))
+    let profile = @moon-pprof.decode_any_profile(decode_base64(b64))
     let spec = Some(@moon-pprof.filter_spec(focus~))
     let report = @moon-pprof.compute_peek(profile, pattern, sample_type~, spec~)
     @json.Json::object({
@@ -263,6 +312,41 @@ pub fn peek_profile_b64(
       "markdown": @json.ToJson::to_json(
         @moon-pprof.render_peek_markdown(report),
       ),
+    }).stringify()
+  } catch {
+    err => json_err(err)
+  }
+}
+
+///|
+/// Prune/convert any supported profile in the browser and return a freshly gzipped `.pb.gz` as base64.
+pub fn prune_profile_b64(
+  b64 : String,
+  focus : String,
+  ignore_pattern : String,
+  hide : String,
+  label_key : String,
+  label_value : String,
+) -> String {
+  try {
+    let profile = @moon-pprof.decode_any_profile(decode_base64(b64))
+    let spec = @moon-pprof.filter_spec(
+      focus~,
+      ignore_pattern~,
+      hide~,
+      label_key~,
+      label_value~,
+    )
+    let pruned = @moon-pprof.prune_profile(profile, spec)
+    let encoded = @moon-pprof.encode_profile(pruned, gzip=true)
+    @json.Json::object({
+      "ok": @json.ToJson::to_json(true),
+      "pb_gz_b64": @json.ToJson::to_json(encode_base64(encoded)),
+      "before_samples": @json.ToJson::to_json(profile.samples.length()),
+      "after_samples": @json.ToJson::to_json(pruned.samples.length()),
+      "before_functions": @json.ToJson::to_json(profile.functions.length()),
+      "after_functions": @json.ToJson::to_json(pruned.functions.length()),
+      "byte_length": @json.ToJson::to_json(encoded.length()),
     }).stringify()
   } catch {
     err => json_err(err)
@@ -286,8 +370,9 @@ extern "js" fn register_browser_api(
     Int32,
   ) -> String,
   peek : (String, String, String, String) -> String,
+  prune : (String, String, String, String, String, String) -> String,
 ) -> Unit =
-  #|(inspect, analyze, compare, peek) => {
+  #|(inspect, analyze, compare, peek, prune) => {
   #|  globalThis.MoonPprof = {
   #|    inspectProfile: (b64) => JSON.parse(inspect(b64)),
   #|    analyzeProfile: (b64, opts = {}) => JSON.parse(analyze(
@@ -318,6 +403,14 @@ extern "js" fn register_browser_api(
   #|      opts.sampleType || "",
   #|      opts.focus || ""
   #|    )),
+  #|    pruneProfile: (b64, opts = {}) => JSON.parse(prune(
+  #|      b64,
+  #|      opts.focus || "",
+  #|      opts.ignore || "",
+  #|      opts.hide || "",
+  #|      opts.labelKey || "",
+  #|      opts.labelValue || ""
+  #|    )),
   #|  };
   #|}
 
@@ -325,5 +418,6 @@ extern "js" fn register_browser_api(
 fn main {
   register_browser_api(
     inspect_profile_b64, analyze_profile_b64, compare_profiles_b64, peek_profile_b64,
+    prune_profile_b64,
   )
 }

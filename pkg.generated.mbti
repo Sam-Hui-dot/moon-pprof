@@ -23,6 +23,8 @@ pub fn compute_top(Profile, sample_type? : String, sort_by? : SortBy, limit? : I
 
 pub fn compute_traces(Profile, sample_type? : String, limit? : Int32, filter? : String, spec? : FilterSpec?) -> TracesReport raise PprofError
 
+pub fn compute_trend(Array[(String, Profile)], sample_type? : String, top_k? : Int32, regression_threshold_pct? : Double, filter? : String, spec? : FilterSpec?) -> TrendReport raise PprofError
+
 pub fn decode_any_profile(Bytes) -> Profile raise PprofError
 
 pub fn decode_profile(Bytes) -> Profile raise PprofError
@@ -42,6 +44,8 @@ pub fn from_folded_stacks(String, sample_type? : String, unit? : String) -> Prof
 pub fn from_perf_script(String) -> Profile raise PprofError
 
 pub fn from_v8_cpuprofile(String) -> Profile raise PprofError
+
+pub fn from_v8_heapprofile(String) -> Profile raise PprofError
 
 pub fn gate_policy(max_total_regression_pct? : Double?, max_func_cum_regression_pct? : Double?, min_abs_delta? : Int64, normalize? : Bool) -> GatePolicy
 
@@ -65,15 +69,15 @@ pub fn render_diff_callgraph_dot(DiffCallGraph) -> String
 
 pub fn render_diff_callgraph_svg(DiffCallGraph, title? : String) -> String
 
-pub fn render_diff_flamegraph_svg(Profile, Profile, sample_type? : String, title? : String, width? : Int32, min_width_px? : Double, normalize? : Bool, filter? : String, spec? : FilterSpec?) -> String raise PprofError
+pub fn render_diff_flamegraph_svg(Profile, Profile, sample_type? : String, title? : String, width? : Int32, min_width_px? : Double, normalize? : Bool, icicle? : Bool, filter? : String, spec? : FilterSpec?) -> String raise PprofError
 
-pub fn render_diff_html(Profile, Profile, sample_type? : String, title? : String, policy? : GatePolicy, limit? : Int32, filter? : String, spec? : FilterSpec?) -> String raise PprofError
+pub fn render_diff_html(Profile, Profile, sample_type? : String, title? : String, policy? : GatePolicy, limit? : Int32, icicle? : Bool, filter? : String, spec? : FilterSpec?) -> String raise PprofError
 
 pub fn render_diff_markdown(DiffReport) -> String
 
 pub fn render_diff_text(DiffReport) -> String
 
-pub fn render_flamegraph_svg(Profile, sample_type? : String, title? : String, width? : Int32, min_width_px? : Double, filter? : String, spec? : FilterSpec?) -> String raise PprofError
+pub fn render_flamegraph_svg(Profile, sample_type? : String, title? : String, width? : Int32, min_width_px? : Double, icicle? : Bool, filter? : String, spec? : FilterSpec?) -> String raise PprofError
 
 pub fn render_folded(Array[FoldedStack]) -> String
 
@@ -93,7 +97,7 @@ pub fn render_peek_markdown(PeekReport) -> String
 
 pub fn render_peek_text(PeekReport) -> String
 
-pub fn render_top_html(Profile, sample_type? : String, title? : String, limit? : Int32, filter? : String, spec? : FilterSpec?) -> String raise PprofError
+pub fn render_top_html(Profile, sample_type? : String, title? : String, limit? : Int32, icicle? : Bool, filter? : String, spec? : FilterSpec?) -> String raise PprofError
 
 pub fn render_top_markdown(TopReport) -> String
 
@@ -102,6 +106,12 @@ pub fn render_top_text(TopReport) -> String
 pub fn render_traces_markdown(TracesReport) -> String
 
 pub fn render_traces_text(TracesReport) -> String
+
+pub fn render_trend_markdown(TrendReport) -> String
+
+pub fn render_trend_svg(TrendReport, title? : String, width? : Int32) -> String
+
+pub fn render_trend_text(TrendReport) -> String
 
 pub fn resolve_sample_type(Profile, sample_type? : String) -> (Int32, String, String) raise PprofError
 
@@ -559,6 +569,47 @@ pub fn TracesReport::equal(Self, Self) -> Bool
 pub fn TracesReport::not_equal(Self, Self) -> Bool
 pub fn TracesReport::to_json(Self) -> @json.Json
 pub fn TracesReport::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct TrendPoint {
+  label : String
+  total : Int64
+  delta_prev_pct : Double
+  delta_first_pct : Double
+  regressed : Bool
+}
+pub fn TrendPoint::equal(Self, Self) -> Bool
+pub fn TrendPoint::not_equal(Self, Self) -> Bool
+pub fn TrendPoint::to_json(Self) -> @json.Json
+pub fn TrendPoint::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct TrendReport {
+  sample_type : String
+  unit : String
+  threshold_pct : Double
+  labels : Array[String]
+  totals : Array[TrendPoint]
+  series : Array[TrendSeries]
+  alerts : Array[String]
+}
+pub fn TrendReport::equal(Self, Self) -> Bool
+pub fn TrendReport::not_equal(Self, Self) -> Bool
+pub fn TrendReport::to_json(Self) -> @json.Json
+pub fn TrendReport::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct TrendSeries {
+  name : String
+  values : Array[Int64]
+  delta_first_pct : Double
+  peak : Int64
+  regressed_at : Array[String]
+}
+pub fn TrendSeries::equal(Self, Self) -> Bool
+pub fn TrendSeries::not_equal(Self, Self) -> Bool
+pub fn TrendSeries::to_json(Self) -> @json.Json
+pub fn TrendSeries::to_repr(Self) -> @debug.Repr
 
 #derive(Eq, @debug.Debug, @json.ToJson)
 pub(all) struct ValueType {

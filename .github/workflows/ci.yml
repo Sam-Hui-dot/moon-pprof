@@ -43,14 +43,14 @@ jobs:
         run: |
           WS="$RUNNER_TEMP/moon-pprof-consumer"
           mkdir -p "$WS/library" "$WS/consumer"
-          cp moon.mod moon.pkg types.mbt wire.mbt decoder.mbt merge.mbt ingest.mbt prune.mbt analysis.mbt diff.mbt flamegraph.mbt callgraph.mbt peek.mbt lines.mbt report.mbt "$WS/library/"
+          cp moon.mod moon.pkg types.mbt wire.mbt decoder.mbt merge.mbt ingest.mbt prune.mbt analysis.mbt diff.mbt trend.mbt flamegraph.mbt callgraph.mbt peek.mbt lines.mbt report.mbt "$WS/library/"
           printf 'members = ["library", "consumer"]\n' > "$WS/moon.work"
           cat > "$WS/consumer/moon.mod" << 'EOF'
           name = "consumer/pprof-check"
           version = "0.1.0"
 
           import {
-            "Sam-Hui-dot/moon-pprof@0.4.0",
+            "Sam-Hui-dot/moon-pprof@0.5.0",
           }
           EOF
           cat > "$WS/consumer/moon.pkg" << 'EOF'
@@ -61,17 +61,28 @@ jobs:
           EOF
           cat > "$WS/consumer/main.mbt" << 'EOF'
           fn main raise {
-            let p = @pprof.from_folded_stacks("app.main;app.work 100\n")
-            let pruned = @pprof.prune_profile(p, @pprof.filter_spec(focus="app.work"))
+            let p1 = @pprof.from_folded_stacks("app.main;app.work 100\n")
+            let p2 = @pprof.from_folded_stacks("app.main;app.work 160\n")
+            let pruned = @pprof.prune_profile(p1, @pprof.filter_spec(focus="app.work"))
             let gz = @pprof.encode_profile(pruned, gzip=true)
             let decoded = @pprof.decode_any_profile(gz)
             let top = @pprof.compute_top(decoded)
             guard top.total == 100L && top.entries.length() == 2 else {
               abort("unexpected top report")
             }
-            let svg = @pprof.render_flamegraph_svg(decoded)
-            guard svg.contains("app.work") else {
-              abort("unexpected svg")
+            let svg = @pprof.render_flamegraph_svg(decoded, icicle=true)
+            guard svg.contains("data-layout=\"icicle\"") && svg.contains("app.work") else {
+              abort("unexpected icicle svg")
+            }
+            let trend = @pprof.compute_trend([("v1", p1), ("v2", p2)], regression_threshold_pct=15.0)
+            let trend_svg = @pprof.render_trend_svg(trend)
+            guard trend.totals[1].regressed && trend_svg.contains("moon-pprof-trend-svg") else {
+              abort("unexpected trend svg")
+            }
+            let heap_json = "{\"head\":{\"id\":1,\"callFrame\":{\"functionName\":\"(root)\",\"url\":\"\",\"lineNumber\":-1},\"selfSize\":0,\"children\":[{\"id\":2,\"callFrame\":{\"functionName\":\"alloc\",\"url\":\"a.js\",\"lineNumber\":1},\"selfSize\":4096,\"children\":[]}]},\"samples\":[{\"size\":4096,\"nodeId\":2,\"ordinal\":1}]}"
+            let hp = @pprof.from_v8_heapprofile(heap_json)
+            guard @pprof.compute_top(hp).total == 4096L else {
+              abort("unexpected heap profile")
             }
             let cg = @pprof.build_callgraph(decoded)
             let cg_svg = @pprof.render_callgraph_svg(cg)

@@ -2,15 +2,16 @@
 let usage : String =
   #|moon-pprof top <FILE> [--sample-type NAME] [--sort flat|cum] [--limit N] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--filter TEXT] [--format text|json|md] [--out FILE]
   #|moon-pprof folded <FILE> [--sample-type NAME] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--filter TEXT] [--out FILE]
-  #|moon-pprof flamegraph <FILE> [--sample-type NAME] [--title TEXT] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--filter TEXT] [--html] [--all-metrics] [--out FILE]
+  #|moon-pprof flamegraph <FILE> [--sample-type NAME] [--title TEXT] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--filter TEXT] [--icicle] [--html] [--all-metrics] [--out FILE]
   #|moon-pprof callgraph <FILE> [--diff <CANDIDATE>] [--sample-type NAME] [--normalize] [--max-nodes N] [--min-node-pct P] [--title TEXT] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--format svg|dot|json] [--out FILE]
   #|moon-pprof peek <FILE> [--pattern SUBSTR] [--sample-type NAME] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--format text|json|md] [--out FILE]
   #|moon-pprof list <FILE> [--pattern SUBSTR] [--source-file PATH] [--sample-type NAME] [--limit N] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--format text|json|md] [--out FILE]
   #|moon-pprof traces <FILE> [--sample-type NAME] [--limit N] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--format text|json|md] [--out FILE]
-  #|moon-pprof diff <BASE> <CANDIDATE> [--sample-type NAME] [--normalize] [--max-total-pct P] [--max-func-pct P] [--min-delta V] [--limit N] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--filter TEXT] [--format text|json|md] [--out FILE] [--flamegraph-out FILE] [--html-out FILE]
+  #|moon-pprof diff <BASE> <CANDIDATE> [--sample-type NAME] [--normalize] [--max-total-pct P] [--max-func-pct P] [--min-delta V] [--limit N] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--filter TEXT] [--icicle] [--format text|json|md] [--out FILE] [--flamegraph-out FILE] [--html-out FILE]
+  #|moon-pprof trend <LABEL1=FILE1> <LABEL2=FILE2> [LABEL3=FILE3...] [--sample-type NAME] [--top-k N] [--threshold-pct P] [--title TEXT] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] [--fail-on-regression] [--format text|md|json|svg] [--out FILE]
   #|moon-pprof merge <FILE1> <FILE2> [FILE...] --out <MERGED.pb.gz> [--raw]
   #|moon-pprof prune <FILE> [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--label KEY=VAL] --out <PRUNED.pb.gz> [--raw]
-  #|moon-pprof convert <FILE> [--from auto|v8|folded|perf] [--sample-type NAME] [--unit UNIT] --out <OUT.pb.gz> [--raw]
+  #|moon-pprof convert <FILE> [--from auto|v8|v8-heap|folded|perf] [--sample-type NAME] [--unit UNIT] --out <OUT.pb.gz> [--raw]
   #|moon-pprof labels <FILE> --key <LABEL_KEY> [--sample-type NAME] [--focus TEXT] [--ignore TEXT] [--hide TEXT] [--format text|json|md] [--out FILE]
 
 ///|
@@ -259,6 +260,7 @@ async fn cmd_flamegraph(args : Array[String]) -> Int32 {
   let mut hide = ""
   let mut label_key = ""
   let mut label_value = ""
+  let mut icicle = false
   let mut as_html = false
   let mut all_metrics = false
   let mut out_path : String? = None
@@ -291,6 +293,10 @@ async fn cmd_flamegraph(args : Array[String]) -> Int32 {
         label_value = v
         i += 2
       }
+      "--icicle" => {
+        icicle = true
+        i += 1
+      }
       "--html" => {
         as_html = true
         i += 1
@@ -320,9 +326,15 @@ async fn cmd_flamegraph(args : Array[String]) -> Int32 {
   let rendered = if all_metrics {
     @moon-pprof.render_multi_metric_html(profile, title~, spec~)
   } else if as_html {
-    @moon-pprof.render_top_html(profile, sample_type~, title~, spec~)
+    @moon-pprof.render_top_html(profile, sample_type~, title~, icicle~, spec~)
   } else {
-    @moon-pprof.render_flamegraph_svg(profile, sample_type~, title~, spec~)
+    @moon-pprof.render_flamegraph_svg(
+      profile,
+      sample_type~,
+      title~,
+      icicle~,
+      spec~,
+    )
   }
   emit_output(rendered, out_path)
   0
@@ -346,6 +358,7 @@ async fn cmd_diff(args : Array[String]) -> Int32 {
   let mut hide = ""
   let mut label_key = ""
   let mut label_value = ""
+  let mut icicle = false
   let mut format = "text"
   let mut out_path : String? = None
   let mut fg_out : String? = None
@@ -408,6 +421,10 @@ async fn cmd_diff(args : Array[String]) -> Int32 {
         label_value = v
         i += 2
       }
+      "--icicle" => {
+        icicle = true
+        i += 1
+      }
       "--format" => {
         format = next_flag_value(args, i, "--format")
         i += 2
@@ -460,6 +477,7 @@ async fn cmd_diff(args : Array[String]) -> Int32 {
         candidate,
         sample_type~,
         normalize~,
+        icicle~,
         spec~,
       )
       @fs.write_file(path, svg, create_mode=CreateOrTruncate)
@@ -474,6 +492,7 @@ async fn cmd_diff(args : Array[String]) -> Int32 {
         sample_type~,
         policy~,
         limit~,
+        icicle~,
         spec~,
       )
       @fs.write_file(path, html, create_mode=CreateOrTruncate)
@@ -1120,6 +1139,8 @@ async fn cmd_convert(args : Array[String]) -> Int32 {
   let profile = match from_fmt {
     "auto" => load_profile(file)
     "v8" => @moon-pprof.from_v8_cpuprofile(@fs.read_file(file).text())
+    "v8-heap" | "heapprofile" =>
+      @moon-pprof.from_v8_heapprofile(@fs.read_file(file).text())
     "folded" =>
       @moon-pprof.from_folded_stacks(
         @fs.read_file(file).text(),
@@ -1129,7 +1150,7 @@ async fn cmd_convert(args : Array[String]) -> Int32 {
     "perf" => @moon-pprof.from_perf_script(@fs.read_file(file).text())
     _ =>
       raise @moon-pprof.PprofError::InvalidInput(
-        "unsupported --from format: \{from_fmt} (expected auto, v8, folded, or perf)",
+        "unsupported --from format: \{from_fmt} (expected auto, v8, v8-heap, folded, or perf)",
       )
   }
   let encoded = @moon-pprof.encode_profile(profile, gzip~)
@@ -1138,6 +1159,128 @@ async fn cmd_convert(args : Array[String]) -> Int32 {
     "converted \{file} (\{from_fmt}) -> \{dest} (\{profile.samples.length()} samples, \{profile.functions.length()} functions, \{encoded.length()} bytes)",
   )
   0
+}
+
+///|
+async fn cmd_trend(args : Array[String]) -> Int32 {
+  let specs : Array[(String, String)] = []
+  let mut sample_type = ""
+  let mut top_k = 5
+  let mut threshold_pct = 15.0
+  let mut title = "MoonBit pprof Performance Trend"
+  let mut focus = ""
+  let mut ignore_pattern = ""
+  let mut hide = ""
+  let mut label_key = ""
+  let mut label_value = ""
+  let mut fail_on_regression = false
+  let mut format = "text"
+  let mut out_path : String? = None
+  let mut i = 1
+  while i < args.length() {
+    match args[i] {
+      "--sample-type" => {
+        sample_type = next_flag_value(args, i, "--sample-type")
+        i += 2
+      }
+      "--top-k" => {
+        top_k = parse_int_arg("--top-k", next_flag_value(args, i, "--top-k"))
+        i += 2
+      }
+      "--threshold-pct" => {
+        threshold_pct = parse_double_arg(
+          "--threshold-pct",
+          next_flag_value(args, i, "--threshold-pct"),
+        )
+        i += 2
+      }
+      "--title" => {
+        title = next_flag_value(args, i, "--title")
+        i += 2
+      }
+      "--focus" | "--filter" => {
+        focus = next_flag_value(args, i, args[i])
+        i += 2
+      }
+      "--ignore" => {
+        ignore_pattern = next_flag_value(args, i, "--ignore")
+        i += 2
+      }
+      "--hide" => {
+        hide = next_flag_value(args, i, "--hide")
+        i += 2
+      }
+      "--label" => {
+        let (k, v) = parse_label_kv(next_flag_value(args, i, "--label"))
+        label_key = k
+        label_value = v
+        i += 2
+      }
+      "--fail-on-regression" => {
+        fail_on_regression = true
+        i += 1
+      }
+      "--format" => {
+        format = next_flag_value(args, i, "--format")
+        i += 2
+      }
+      "--out" => {
+        out_path = Some(next_flag_value(args, i, "--out"))
+        i += 2
+      }
+      other =>
+        if other.has_prefix("--") {
+          raise @moon-pprof.PprofError::InvalidInput("unknown option: \{other}")
+        } else {
+          match other.split_once("=") {
+            Some((lbl, path)) => specs.push((lbl.to_owned(), path.to_owned()))
+            None => specs.push(("rev\{specs.length() + 1}", other))
+          }
+          i += 1
+        }
+    }
+  }
+  guard specs.length() >= 2 else {
+    raise @moon-pprof.PprofError::InvalidInput(
+      "trend requires at least two <label=file> arguments",
+    )
+  }
+  let loaded : Array[(String, @moon-pprof.Profile)] = []
+  for pair in specs {
+    loaded.push((pair.0, load_profile(pair.1)))
+  }
+  let filter_s = Some(
+    @moon-pprof.filter_spec(
+      focus~,
+      ignore_pattern~,
+      hide~,
+      label_key~,
+      label_value~,
+    ),
+  )
+  let report = @moon-pprof.compute_trend(
+    loaded,
+    sample_type~,
+    top_k~,
+    regression_threshold_pct=threshold_pct,
+    spec=filter_s,
+  )
+  let rendered = match format {
+    "text" => @moon-pprof.render_trend_text(report)
+    "md" | "markdown" => @moon-pprof.render_trend_markdown(report)
+    "json" => @json.ToJson::to_json(report).stringify()
+    "svg" => @moon-pprof.render_trend_svg(report, title~)
+    _ =>
+      raise @moon-pprof.PprofError::InvalidInput(
+        "unsupported --format value: \{format} (expected text, md, json, or svg)",
+      )
+  }
+  emit_output(rendered, out_path)
+  if fail_on_regression && !report.alerts.is_empty() {
+    1
+  } else {
+    0
+  }
 }
 
 ///|
@@ -1151,6 +1294,7 @@ async fn run(args : Array[String]) -> Int32 {
     Some("list") => cmd_list(args)
     Some("traces") => cmd_traces(args)
     Some("diff") => cmd_diff(args)
+    Some("trend") => cmd_trend(args)
     Some("merge") => cmd_merge(args)
     Some("prune") => cmd_prune(args)
     Some("convert") => cmd_convert(args)

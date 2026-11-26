@@ -30,7 +30,8 @@ This document tracks exact specification coverage of `Sam-Hui-dot/moon-pprof` ag
 | --- | :---: | :---: | :---: | --- |
 | Google pprof `.pb.gz` | Yes | Native | Yes (0-error CPU/Heap/Merge/Prune) | Go, Rust (`pprof-rs`), C++ (`gperftools`), Python (`py-spy`/pprof) |
 | Uncompressed `.pb` | Yes | Native | Yes | Raw protobuf streams & embedded targets |
-| V8 `.cpuprofile` JSON | Yes | Yes | Yes (`moonbit-self.cpuprofile` -> `.pb.gz`) | **MoonBit JS/Wasm (`node --cpu-prof`)**, Node.js, Chrome DevTools (with MoonBit symbol demangling) |
+| V8 `.cpuprofile` JSON | Yes | Yes | Yes (`moonbit-self.cpuprofile` -> `.pb.gz`, `758,330,000 ns`) | **MoonBit JS/Wasm CPU (`node --cpu-prof`)**, Node.js, Chrome DevTools (with MoonBit symbol demangling) |
+| V8 `.heapprofile` JSON | Yes | Yes | Yes (`moonbit-self.heapprofile` -> `.pb.gz`, `5,039,760 B`) | **MoonBit JS/Wasm Heap (`node --heap-prof`)**, Node.js, Chrome DevTools allocation sampling |
 | Linux `perf script` | Yes | Yes | Yes | Native MoonBit binaries, Linux C/C++/Rust perf captures (zero Perl dependency) |
 | Brendan Gregg `folded` | Yes | Yes | Yes | Existing flamegraph pipelines & DTrace/eBPF stack collapses |
 
@@ -47,10 +48,11 @@ This document tracks exact specification coverage of `Sam-Hui-dot/moon-pprof` ag
 | Multi-Profile Merge | `-proto a b` | `merge` / `merge_profiles` | **0-error match** (670M ns merged CPU) |
 | Filtered Re-Encode | `-proto -focus=...` | `prune` / `prune_profile` | **0-error match** (`-focus=main.slowRegressionLoop`) |
 | Callgraph Visualization | `-svg` / `-dot` | `callgraph` / `render_callgraph_svg` / `render_callgraph_dot` | Pure MoonBit Sugiyama layout (no Graphviz required) |
-| Differential Profiling | `-diff_base` | `diff` / `compare_profiles` + `render_diff_flamegraph_svg` + `render_diff_callgraph_svg` | Verified with CI exit-code gate (`0` / `1` / `2`) |
+| Differential Profiling | `-diff_base` | `diff` / `compare_profiles` + `render_diff_flamegraph_svg(..., icicle~)` + `action.yml` | Verified with CI exit-code gate (`0` / `1` / `2`) and reusable GitHub Action |
+| Multi-Version Trend | — (beyond `go tool pprof`) | `trend` / `compute_trend` + `render_trend_svg` | Verified 3-version regression inflection detection & native SVG chart |
 | Sample Label Slicing | `-tagfocus` / `-tags` | `labels` + `--label key=val` / `group_by_label` | Unit-tested across 4 targets |
 | Multi-Metric Interactive HTML | `-http` (multi-index) | `flamegraph --all-metrics` / `render_multi_metric_html` | Offline zero-CDN 4-metric Heap HTML |
-| Zero-Upload Browser App | Web UI (local server) | [Live GitHub Pages](https://sam-hui-dot.github.io/moon-pprof/) (`web/` + `docs/index.html`) | 100% client-side, 5 input formats, in-browser `.pb.gz` prune export |
+| Zero-Upload Browser App | Web UI (local server) | [Live GitHub Pages](https://sam-hui-dot.github.io/moon-pprof/) (`web/` + `docs/index.html`) | 100% client-side, 6 input formats, default Top-Down Icicle + Flame toggle, in-browser `.pb.gz` prune export |
 
 ## 4. Explicit Scope Boundaries
 

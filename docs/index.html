@@ -48,10 +48,11 @@
   <header>
     <div>
       <h1>moon-pprof <span class="pill">100% Client-Side / Zero Upload</span><span class="pill pill-fmt" id="fmt-badge" style="display:none"></span></h1>
-      <div class="sub">Pure MoonBit universal profiler: <code>.pb.gz</code> / <code>.pb</code> / V8 <code>.cpuprofile</code> (MoonBit JS &amp; Node) / Linux <code>perf script</code> / <code>folded</code> — Flamegraph, layered Callgraph, Line Hotspots, Traces &amp; Prune Export.</div>
+      <div class="sub">Pure MoonBit universal profiler: <code>.pb.gz</code> / <code>.pb</code> / V8 <code>.cpuprofile</code> &amp; <code>.heapprofile</code> (MoonBit JS &amp; Node) / Linux <code>perf script</code> / <code>folded</code> — Icicle &amp; Flamegraph, layered Callgraph, Line Hotspots, Traces &amp; Prune Export.</div>
     </div>
     <div class="row" style="margin-top:0">
-      <button id="demo-mbt-self" class="primary">MoonBit Self-Profile (.cpuprofile)</button>
+      <button id="demo-mbt-self" class="primary">MoonBit Self CPU (.cpuprofile)</button>
+      <button id="demo-mbt-heap">MoonBit Self Heap (.heapprofile)</button>
       <button id="demo-cpu-diff">Go CPU Diff</button>
       <button id="demo-heap-diff">Go Heap Diff</button>
       <button id="demo-heap-single">Go Heap 4-Metric</button>
@@ -61,14 +62,14 @@
   <div class="card">
     <div class="grid2">
       <div class="drop" id="drop-base">
-        <strong>Baseline / Single Profile (<code>.pb.gz</code>, <code>.pb</code>, <code>.cpuprofile</code>, <code>perf</code>, <code>folded</code>)</strong>
+        <strong>Baseline / Single Profile (<code>.pb.gz</code>, <code>.pb</code>, <code>.cpuprofile</code>, <code>.heapprofile</code>, <code>perf</code>, <code>folded</code>)</strong>
         <span id="base-label">Drop file here or click to select</span>
-        <input id="file-base" type="file" accept=".gz,.pb,.pprof,.cpuprofile,.json,.txt,.folded,.perf" style="display:none">
+        <input id="file-base" type="file" accept=".gz,.pb,.pprof,.cpuprofile,.heapprofile,.json,.txt,.folded,.perf" style="display:none">
       </div>
       <div class="drop" id="drop-cand">
         <strong>Candidate Profile (Optional — enables Differential Mode)</strong>
         <span id="cand-label">Drop second file to compare, or leave empty for single view</span>
-        <input id="file-cand" type="file" accept=".gz,.pb,.pprof,.cpuprofile,.json,.txt,.folded,.perf" style="display:none">
+        <input id="file-cand" type="file" accept=".gz,.pb,.pprof,.cpuprofile,.heapprofile,.json,.txt,.folded,.perf" style="display:none">
       </div>
     </div>
 
@@ -86,13 +87,13 @@
       <button id="prune-dl-btn">Prune &amp; Export .pb.gz</button>
       <button id="clear-cand">Clear Candidate</button>
     </div>
-    <div class="status" id="status">Ready. Drop any .pb.gz / .cpuprofile / perf / folded file, or click a built-in demo above.</div>
+    <div class="status" id="status">Ready. Drop any .pb.gz / .cpuprofile / .heapprofile / perf / folded file, or click a built-in demo above.</div>
   </div>
 
   <div class="card" id="output-card" style="display:none">
     <div class="row" style="margin-top:0;margin-bottom:12px;justify-content:space-between">
       <div class="row" style="margin-top:0">
-        <button class="tab active" data-tab="fg">Flamegraph</button>
+        <button class="tab active" data-tab="fg">Icicle / Flame</button>
         <button class="tab" data-tab="cg">Callgraph</button>
         <button class="tab" data-tab="tbl">Top / Diff</button>
         <button class="tab" data-tab="lines">Lines</button>
@@ -101,6 +102,7 @@
         <button class="tab" data-tab="md">Markdown / DOT</button>
       </div>
       <div class="row" style="margin-top:0">
+        <button id="layout-toggle" title="Switch between Top-Down Icicle and Bottom-Up Flamegraph">Layout: Icicle &#9662;</button>
         <input id="fg-search" type="text" placeholder="Highlight frame / node..." style="width:185px">
         <button id="fg-reset">Reset Zoom</button>
         <button id="dl-svg">Download SVG</button>
@@ -132,7 +134,7 @@
 <script src="./samples.js"></script>
 <script>
 (function(){
-  let baseB64 = "", candB64 = "", lastResult = null, currentTab = "fg";
+  let baseB64 = "", candB64 = "", lastResult = null, currentTab = "fg", useIcicle = true;
   const $ = id => document.getElementById(id);
 
   function setStatus(msg, isErr){
@@ -306,7 +308,8 @@
       hide: $("hide").value.trim(),
       labelKey,
       labelValue,
-      maxNodes: parseInt($("max-nodes").value, 10) || 30
+      maxNodes: parseInt($("max-nodes").value, 10) || 30,
+      icicle: useIcicle
     };
   }
 
@@ -409,10 +412,21 @@
     }
   }
 
-  $("demo-mbt-self").addEventListener("click", () => loadDemo("moonbit_self", "", "moonbit-self.cpuprofile (MoonBit JS dogfooding)", "", "cpu"));
+  $("layout-toggle").addEventListener("click", () => {
+    useIcicle = !useIcicle;
+    $("layout-toggle").innerHTML = useIcicle ? "Layout: Icicle &#9662;" : "Layout: Flame &#9652;";
+    if(baseB64) runAnalyze();
+  });
+
+  $("demo-mbt-self").addEventListener("click", () => loadDemo("moonbit_self", "", "moonbit-self.cpuprofile (MoonBit JS CPU dogfooding)", "", "cpu"));
+  $("demo-mbt-heap").addEventListener("click", () => loadDemo("moonbit_self_heap", "", "moonbit-self.heapprofile (MoonBit JS Heap dogfooding)", "", "alloc_space"));
   $("demo-cpu-diff").addEventListener("click", () => loadDemo("baseline_cpu", "candidate_cpu", "baseline-cpu.pb.gz", "candidate-cpu.pb.gz", "cpu"));
   $("demo-heap-diff").addEventListener("click", () => loadDemo("baseline_heap", "candidate_heap", "baseline-heap.pb.gz", "candidate-heap.pb.gz", "alloc_space"));
   $("demo-heap-single").addEventListener("click", () => loadDemo("candidate_heap", "", "candidate-heap.pb.gz", "", "alloc_space"));
+
+  if(globalThis.MoonPprof && globalThis.MOON_PPROF_SAMPLES && globalThis.MOON_PPROF_SAMPLES.moonbit_self){
+    loadDemo("moonbit_self", "", "moonbit-self.cpuprofile (MoonBit JS CPU dogfooding)", "", "cpu");
+  }
 })();
 </script>
 </body>

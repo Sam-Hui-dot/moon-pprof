@@ -92,7 +92,7 @@ fn collect_label_keys(
 }
 
 ///|
-/// Inspect any base64-encoded profile (`.pb.gz`, `.pb`, V8 `.cpuprofile`, `perf script`, or `folded`).
+/// Inspect any base64-encoded profile (`.pb.gz`, `.pb`, V8 `.cpuprofile`, V8 `.heapprofile`, `perf script`, or `folded`).
 pub fn inspect_profile_b64(b64 : String) -> String {
   try {
     let bytes = decode_base64(b64)
@@ -126,7 +126,7 @@ pub fn inspect_profile_b64(b64 : String) -> String {
 }
 
 ///|
-/// Analyze a single profile in any supported format and return Top, Flamegraph, Callgraph, Lines, Traces, and Markdown.
+/// Analyze a single profile in any supported format and return Top, Flame/Icicle Graph, Callgraph, Lines, Traces, and Markdown.
 pub fn analyze_profile_b64(
   b64 : String,
   sample_type : String,
@@ -136,6 +136,7 @@ pub fn analyze_profile_b64(
   label_key : String,
   label_value : String,
   max_nodes : Int32,
+  icicle : Bool,
 ) -> String {
   try {
     let bytes = decode_base64(b64)
@@ -157,10 +158,16 @@ pub fn analyze_profile_b64(
       limit=40,
       spec~,
     )
+    let fg_title = if icicle {
+      "Icicle Graph (\{top.sample_type})"
+    } else {
+      "Flamegraph (\{top.sample_type})"
+    }
     let fg_svg = @moon-pprof.render_flamegraph_svg(
       profile,
       sample_type~,
-      title="Flamegraph (\{top.sample_type})",
+      title=fg_title,
+      icicle~,
       spec~,
     )
     let cg = @moon-pprof.build_callgraph(
@@ -216,7 +223,7 @@ pub fn analyze_profile_b64(
 }
 
 ///|
-/// Compare two profiles in any supported format and return DiffReport, Diff Flamegraph, Diff Callgraph, Lines, Traces, and Markdown.
+/// Compare two profiles in any supported format and return DiffReport, Diff Flame/Icicle Graph, Diff Callgraph, Lines, Traces, and Markdown.
 pub fn compare_profiles_b64(
   base_b64 : String,
   cand_b64 : String,
@@ -228,6 +235,7 @@ pub fn compare_profiles_b64(
   label_key : String,
   label_value : String,
   max_nodes : Int32,
+  icicle : Bool,
 ) -> String {
   try {
     let base = @moon-pprof.decode_any_profile(decode_base64(base_b64))
@@ -250,12 +258,18 @@ pub fn compare_profiles_b64(
       limit=40,
       spec~,
     )
+    let fg_title = if icicle {
+      "Differential Icicle Graph (\{diff.sample_type})"
+    } else {
+      "Differential Flamegraph (\{diff.sample_type})"
+    }
     let fg_svg = @moon-pprof.render_diff_flamegraph_svg(
       base,
       cand,
       sample_type~,
-      title="Differential Flamegraph (\{diff.sample_type})",
+      title=fg_title,
       normalize~,
+      icicle~,
       spec~,
     )
     let dcg = @moon-pprof.build_diff_callgraph(
@@ -356,7 +370,17 @@ pub fn prune_profile_b64(
 ///|
 extern "js" fn register_browser_api(
   inspect : (String) -> String,
-  analyze : (String, String, String, String, String, String, String, Int32) -> String,
+  analyze : (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    Int32,
+    Bool,
+  ) -> String,
   compare : (
     String,
     String,
@@ -368,6 +392,7 @@ extern "js" fn register_browser_api(
     String,
     String,
     Int32,
+    Bool,
   ) -> String,
   peek : (String, String, String, String) -> String,
   prune : (String, String, String, String, String, String) -> String,
@@ -383,7 +408,8 @@ extern "js" fn register_browser_api(
   #|      opts.hide || "",
   #|      opts.labelKey || "",
   #|      opts.labelValue || "",
-  #|      opts.maxNodes || 35
+  #|      opts.maxNodes || 35,
+  #|      opts.icicle !== false
   #|    )),
   #|    compareProfiles: (baseB64, candB64, opts = {}) => JSON.parse(compare(
   #|      baseB64,
@@ -395,7 +421,8 @@ extern "js" fn register_browser_api(
   #|      opts.hide || "",
   #|      opts.labelKey || "",
   #|      opts.labelValue || "",
-  #|      opts.maxNodes || 35
+  #|      opts.maxNodes || 35,
+  #|      opts.icicle !== false
   #|    )),
   #|    peekProfile: (b64, pattern, opts = {}) => JSON.parse(peek(
   #|      b64,

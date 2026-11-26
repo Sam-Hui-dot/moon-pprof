@@ -239,7 +239,60 @@ def verify_prune_list_and_dogfood(cand_cpu: Path, self_v8: Path):
     moon_self_report = json.loads(moon_self_res.stdout.strip().splitlines()[-1])
     assert int(moon_self_report["total"]) == go_self_total
     assert any("WireReader::read_varint" in e["name"] for e in moon_self_report["entries"])
-    print(f"[V8 -> PPROF INTEROP OK] MoonBit self-profile converted to .pb.gz and verified by `go tool pprof` (total={go_self_total}ns)")
+    print(f"[V8 CPU -> PPROF INTEROP OK] MoonBit self-profile converted to .pb.gz and verified by `go tool pprof` (total={go_self_total}ns)")
+
+
+def verify_v8_heap_trend_and_icicle(base_cpu: Path, cand_cpu: Path, self_heap: Path):
+    # 1. V8 .heapprofile -> .pb.gz conversion cross-checked with 0 error against `go tool pprof`
+    converted_heap_gz = OUT / "moonbit-self-heap.pb.gz"
+    run_moon_pprof(["convert", str(self_heap), "--from", "v8-heap", "--out", str(converted_heap_gz)])
+    go_heap_total, _ = parse_go_pprof_top(converted_heap_gz, sample_index="alloc_space", unit_flag="B")
+    moon_heap_res = run_moon_pprof([
+        "top", str(converted_heap_gz), "--sample-type", "alloc_space", "--limit", "50", "--format", "json",
+    ])
+    moon_heap_report = json.loads(moon_heap_res.stdout.strip().splitlines()[-1])
+    assert int(moon_heap_report["total"]) == go_heap_total, (
+        f"v8-heap total mismatch: moon={moon_heap_report['total']} go={go_heap_total}"
+    )
+    assert any("moon-pprof" in e["name"] or "flate" in e["name"] for e in moon_heap_report["entries"])
+    print(f"[V8 HEAP -> PPROF INTEROP OK] MoonBit self-heap converted to .pb.gz and verified by `go tool pprof` (alloc_space={go_heap_total}B)")
+
+    # 2. Multi-version trend inflection detection + SVG output + --fail-on-regression exit code
+    trend_svg = OUT / "trend-cpu.svg"
+    trend_res = run_moon_pprof([
+        "trend",
+        f"v1={base_cpu}",
+        f"v2={base_cpu}",
+        f"v3={cand_cpu}",
+        "--top-k", "5",
+        "--threshold-pct", "15",
+        "--format", "json",
+        "--fail-on-regression",
+    ], check=False)
+    assert trend_res.returncode == 1, f"Expected trend --fail-on-regression exit 1, got {trend_res.returncode}"
+    trend_report = json.loads(trend_res.stdout.strip().splitlines()[-1])
+    assert trend_report["totals"][0]["regressed"] is False
+    assert trend_report["totals"][1]["regressed"] is False
+    assert trend_report["totals"][2]["regressed"] is True
+    assert len(trend_report["alerts"]) >= 2
+
+    run_moon_pprof([
+        "trend",
+        f"v1={base_cpu}",
+        f"v2={base_cpu}",
+        f"v3={cand_cpu}",
+        "--format", "svg",
+        "--out", str(trend_svg),
+    ])
+    svg_text = trend_svg.read_text(encoding="utf-8")
+    assert "moon-pprof-trend-svg" in svg_text and "trend-regressed" in svg_text
+
+    # 3. Icicle (Top-Down) SVG layout verification
+    icicle_svg = OUT / "icicle-cpu.svg"
+    run_moon_pprof(["flamegraph", str(cand_cpu), "--icicle", "--out", str(icicle_svg)])
+    icicle_text = icicle_svg.read_text(encoding="utf-8")
+    assert 'data-layout="icicle"' in icicle_text and "slowRegressionLoop" in icicle_text
+    print(f"[TREND & ICICLE OK] 3-version trend detected {len(trend_report['alerts'])} inflection alerts at v3 + valid trend & icicle SVGs")
 
 
 def main():
@@ -248,7 +301,8 @@ def main():
     base_heap = FIXTURES / "baseline-heap.pb.gz"
     cand_heap = FIXTURES / "candidate-heap.pb.gz"
     self_v8 = FIXTURES / "moonbit-self.cpuprofile"
-    for p in (base_cpu, cand_cpu, base_heap, cand_heap, self_v8):
+    self_heap = FIXTURES / "moonbit-self.heapprofile"
+    for p in (base_cpu, cand_cpu, base_heap, cand_heap, self_v8, self_heap):
         if not p.exists():
             raise SystemExit(f"Missing fixture {p}")
     verify_single(base_cpu, expected_type="cpu", unit_flag="ns")
@@ -259,6 +313,7 @@ def main():
     verify_diff(base_cpu, cand_cpu)
     verify_peek_and_callgraph(base_cpu, cand_cpu, cand_heap)
     verify_prune_list_and_dogfood(cand_cpu, self_v8)
+    verify_v8_heap_trend_and_icicle(base_cpu, cand_cpu, self_heap)
 
 
 if __name__ == "__main__":

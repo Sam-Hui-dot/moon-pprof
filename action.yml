@@ -1,0 +1,151 @@
+name: 'moon-pprof Performance Regression Gate'
+description: 'Pure-MoonBit pprof differential profiler, regression gate, and Icicle/Flamegraph report generator for CI.'
+author: 'Sam-Hui-dot'
+branding:
+  icon: 'activity'
+  color: 'blue'
+
+inputs:
+  baseline:
+    description: 'Path to baseline profile (.pb.gz, .pb, .cpuprofile, .heapprofile, perf script, or folded)'
+    required: true
+  candidate:
+    description: 'Path to candidate profile (.pb.gz, .pb, .cpuprofile, .heapprofile, perf script, or folded)'
+    required: true
+  sample-type:
+    description: 'Optional pprof sample type name (e.g. cpu, alloc_space, inuse_space)'
+    required: false
+    default: ''
+  normalize:
+    description: 'Normalize total cost to compare proportional hotspots (true/false)'
+    required: false
+    default: 'false'
+  max-total-pct:
+    description: 'Maximum allowed total regression percentage'
+    required: false
+    default: '15'
+  max-func-pct:
+    description: 'Maximum allowed per-function cumulative regression percentage'
+    required: false
+    default: '25'
+  min-delta:
+    description: 'Minimum absolute delta threshold to ignore tiny noise'
+    required: false
+    default: '0'
+  focus:
+    description: 'Optional substring filter to retain matching stacks'
+    required: false
+    default: ''
+  ignore:
+    description: 'Optional substring filter to drop matching stacks'
+    required: false
+    default: ''
+  hide:
+    description: 'Optional substring filter to strip internal frames (e.g. runtime.)'
+    required: false
+    default: ''
+  icicle:
+    description: 'Render Top-Down Icicle graph instead of bottom-up Flamegraph (true/false)'
+    required: false
+    default: 'true'
+  out-dir:
+    description: 'Directory where diff-report.md, diff-flamegraph.svg, and diff-report.html will be written'
+    required: false
+    default: 'moon-pprof-out'
+  fail-on-regression:
+    description: 'Fail the workflow step when the regression gate does not pass (true/false)'
+    required: false
+    default: 'true'
+
+outputs:
+  passed:
+    description: 'Whether the regression gate passed (true or false)'
+    value: ${{ steps.run-diff.outputs.passed }}
+  report-markdown:
+    description: 'Path to the generated Markdown differential report'
+    value: ${{ steps.run-diff.outputs.report-markdown }}
+  flamegraph-svg:
+    description: 'Path to the generated differential Icicle/Flamegraph SVG'
+    value: ${{ steps.run-diff.outputs.flamegraph-svg }}
+  report-html:
+    description: 'Path to the generated interactive offline HTML differential report'
+    value: ${{ steps.run-diff.outputs.report-html }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Ensure MoonBit CLI
+      shell: bash
+      run: |
+        if ! command -v moon >/dev/null 2>&1; then
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+        fi
+
+    - name: Run moon-pprof diff gate
+      id: run-diff
+      shell: bash
+      env:
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        INPUT_CANDIDATE: ${{ inputs.candidate }}
+        INPUT_SAMPLE_TYPE: ${{ inputs.sample-type }}
+        INPUT_NORMALIZE: ${{ inputs.normalize }}
+        INPUT_MAX_TOTAL_PCT: ${{ inputs.max-total-pct }}
+        INPUT_MAX_FUNC_PCT: ${{ inputs.max-func-pct }}
+        INPUT_MIN_DELTA: ${{ inputs.min-delta }}
+        INPUT_FOCUS: ${{ inputs.focus }}
+        INPUT_IGNORE: ${{ inputs.ignore }}
+        INPUT_HIDE: ${{ inputs.hide }}
+        INPUT_ICICLE: ${{ inputs.icicle }}
+        INPUT_OUT_DIR: ${{ inputs.out-dir }}
+        INPUT_FAIL_ON_REGRESSION: ${{ inputs.fail-on-regression }}
+      run: |
+        set -euo pipefail
+        resolve_path() {
+          case "$1" in
+            /*|[A-Za-z]:/*|[A-Za-z]:\\*) echo "$1" ;;
+            *) echo "${GITHUB_WORKSPACE}/$1" ;;
+          esac
+        }
+        BASE_PATH="$(resolve_path "$INPUT_BASELINE")"
+        CAND_PATH="$(resolve_path "$INPUT_CANDIDATE")"
+        OUT_PATH="$(resolve_path "$INPUT_OUT_DIR")"
+        mkdir -p "$OUT_PATH"
+
+        MD_OUT="${OUT_PATH}/diff-report.md"
+        SVG_OUT="${OUT_PATH}/diff-flamegraph.svg"
+        HTML_OUT="${OUT_PATH}/diff-report.html"
+
+        ARGS=(diff "$BASE_PATH" "$CAND_PATH" --format md --out "$MD_OUT" --flamegraph-out "$SVG_OUT" --html-out "$HTML_OUT")
+        [ -n "$INPUT_SAMPLE_TYPE" ] && ARGS+=(--sample-type "$INPUT_SAMPLE_TYPE")
+        [ "$INPUT_NORMALIZE" = "true" ] && ARGS+=(--normalize)
+        [ -n "$INPUT_MAX_TOTAL_PCT" ] && ARGS+=(--max-total-pct "$INPUT_MAX_TOTAL_PCT")
+        [ -n "$INPUT_MAX_FUNC_PCT" ] && ARGS+=(--max-func-pct "$INPUT_MAX_FUNC_PCT")
+        [ -n "$INPUT_MIN_DELTA" ] && ARGS+=(--min-delta "$INPUT_MIN_DELTA")
+        [ -n "$INPUT_FOCUS" ] && ARGS+=(--focus "$INPUT_FOCUS")
+        [ -n "$INPUT_IGNORE" ] && ARGS+=(--ignore "$INPUT_IGNORE")
+        [ -n "$INPUT_HIDE" ] && ARGS+=(--hide "$INPUT_HIDE")
+        [ "$INPUT_ICICLE" = "true" ] && ARGS+=(--icicle)
+
+        cd "${{ github.action_path }}"
+        set +e
+        moon run --target native cmd/main -- "${ARGS[@]}"
+        CODE=$?
+        set -e
+
+        if [ -f "$MD_OUT" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+          cat "$MD_OUT" >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+        echo "report-markdown=${MD_OUT}" >> "$GITHUB_OUTPUT"
+        echo "flamegraph-svg=${SVG_OUT}" >> "$GITHUB_OUTPUT"
+        echo "report-html=${HTML_OUT}" >> "$GITHUB_OUTPUT"
+
+        if [ "$CODE" -eq 0 ]; then
+          echo "passed=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "passed=false" >> "$GITHUB_OUTPUT"
+          if [ "$INPUT_FAIL_ON_REGRESSION" = "true" ]; then
+            exit "$CODE"
+          fi
+        fi

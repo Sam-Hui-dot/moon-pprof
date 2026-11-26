@@ -29,6 +29,7 @@ def main() -> None:
         "baseline_heap": "baseline-heap.pb.gz",
         "candidate_heap": "candidate-heap.pb.gz",
         "moonbit_self": "moonbit-self.cpuprofile",
+        "moonbit_self_heap": "moonbit-self.heapprofile",
     }
     encoded = {}
     for key, fname in sample_map.items():
@@ -52,12 +53,18 @@ def main() -> None:
         "const mbt = M.inspectProfile(S.moonbit_self);\n"
         "if (!mbt.ok || mbt.format !== 'v8-cpuprofile') throw new Error('inspect moonbit self failed');\n"
         "const selfRes = M.analyzeProfile(S.moonbit_self, { sampleType: 'cpu' });\n"
-        "if (!selfRes.ok || !selfRes.flamegraph_svg.includes('WireReader::read_varint') || selfRes.lines.entries.length < 1 || selfRes.traces.traces.length < 1) throw new Error('self analyze failed');\n"
+        "if (!selfRes.ok || !selfRes.flamegraph_svg.includes('data-layout=\"icicle\"') || !selfRes.flamegraph_svg.includes('WireReader::read_varint') || selfRes.lines.entries.length < 1 || selfRes.traces.traces.length < 1) throw new Error('self analyze failed');\n"
+        "const selfFlame = M.analyzeProfile(S.moonbit_self, { sampleType: 'cpu', icicle: false });\n"
+        "if (!selfFlame.ok || !selfFlame.flamegraph_svg.includes('data-layout=\"flame\"')) throw new Error('flame toggle failed');\n"
+        "const mbtHeap = M.inspectProfile(S.moonbit_self_heap);\n"
+        "if (!mbtHeap.ok || mbtHeap.format !== 'v8-heapprofile') throw new Error('inspect moonbit self heap failed');\n"
+        "const selfHeapRes = M.analyzeProfile(S.moonbit_self_heap, { sampleType: 'alloc_space' });\n"
+        "if (!selfHeapRes.ok || !selfHeapRes.flamegraph_svg.includes('data-layout=\"icicle\"') || selfHeapRes.top.entries.length < 5) throw new Error('self heap analyze failed');\n"
         "const pruned = M.pruneProfile(S.candidate_cpu, { hide: 'runtime.' });\n"
         "if (!pruned.ok || !pruned.pb_gz_b64 || pruned.after_functions >= pruned.before_functions) throw new Error('prune failed');\n"
         "const diff = M.compareProfiles(S.baseline_cpu, S.candidate_cpu, {});\n"
-        "if (!diff.ok || diff.diff.baseline_total !== '180000000' || diff.diff.candidate_total !== '490000000') throw new Error('diff failed');\n"
-        "console.log('WEB_BUNDLE_SMOKE_OK', JSON.stringify({ heap_metrics: info.metrics.length, self_format: mbt.format, self_samples: mbt.sample_count, pruned_bytes: pruned.byte_length, self_lines: selfRes.lines.entries.length }));\n"
+        "if (!diff.ok || !diff.flamegraph_svg.includes('data-layout=\"icicle\"') || diff.diff.baseline_total !== '180000000' || diff.diff.candidate_total !== '490000000') throw new Error('diff failed');\n"
+        "console.log('WEB_BUNDLE_SMOKE_OK', JSON.stringify({ heap_metrics: info.metrics.length, self_format: mbt.format, self_heap_format: mbtHeap.format, self_heap_total: selfHeapRes.top.total, self_samples: mbt.sample_count, pruned_bytes: pruned.byte_length }));\n"
     )
     subprocess.run(["node", "-e", smoke], cwd=ROOT, check=True)
 

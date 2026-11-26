@@ -49,12 +49,22 @@ fn build_flame_tree(stacks : Array[FoldedStack]) -> FlameNode {
 }
 
 ///|
-fn tree_depth(node : FlameNode) -> Int32 {
+fn visible_tree_depth(
+  node : FlameNode,
+  w : Double,
+  min_width_px : Double,
+) -> Int32 {
+  if w < min_width_px || node.total <= 0L {
+    return 0
+  }
   let mut max_child = 0
   for _, child in node.children {
-    let d = tree_depth(child)
-    if d > max_child {
-      max_child = d
+    let cw = w * child.total.to_double() / node.total.to_double()
+    if cw >= min_width_px && child.total > 0L {
+      let d = visible_tree_depth(child, cw, min_width_px)
+      if d > max_child {
+        max_child = d
+      }
     }
   }
   1 + max_child
@@ -168,8 +178,9 @@ fn render_frame_svg(
   depth : Int32,
   x : Double,
   w : Double,
-  base_y : Double,
+  anchor_y : Double,
   frame_h : Double,
+  icicle : Bool,
   root_total : Int64,
   unit : String,
   min_width_px : Double,
@@ -181,7 +192,11 @@ fn render_frame_svg(
   if w < min_width_px || node.total <= 0L {
     return
   }
-  let y = base_y - (depth + 1).to_double() * frame_h
+  let y = if icicle {
+    anchor_y + depth.to_double() * frame_h
+  } else {
+    anchor_y - (depth + 1).to_double() * frame_h
+  }
   let share = pct(node.total, root_total)
   let (fill, tooltip) = if diff_mode {
     let raw_base = base_totals.get(node.path).unwrap_or(0L)
@@ -235,8 +250,9 @@ fn render_frame_svg(
       depth + 1,
       cursor,
       cw,
-      base_y,
+      anchor_y,
       frame_h,
+      icicle,
       root_total,
       unit,
       min_width_px,
@@ -250,32 +266,34 @@ fn render_frame_svg(
 }
 
 ///|
-/// Render an interactive-ready native SVG flame graph for a single profile.
+/// Render an interactive-ready native SVG flame or icicle graph for a single profile.
 pub fn render_flamegraph_svg(
   profile : Profile,
   sample_type~ : String = "",
   title~ : String = "MoonBit pprof Flame Graph",
   width~ : Int32 = 1200,
   min_width_px~ : Double = 1.5,
+  icicle~ : Bool = false,
   filter~ : String = "",
   spec~ : FilterSpec? = None,
 ) -> String raise PprofError {
   let (_, st_name, st_unit) = resolve_sample_type(profile, sample_type~)
   let stacks = collapse_stacks(profile, sample_type=st_name, filter~, spec~)
   let root = build_flame_tree(stacks)
-  let depth = tree_depth(root)
   let frame_h = 18.0
   let pad_x = 12.0
-  let header_h = 46.0
-  let footer_h = 20.0
+  let header_h = 50.0
+  let footer_h = 16.0
   let svg_w = width.to_double()
   let inner_w = svg_w - 2.0 * pad_x
+  let vis_depth = visible_tree_depth(root, inner_w, min_width_px)
+  let depth = if vis_depth < 1 { 1 } else { vis_depth }
   let svg_h = header_h + depth.to_double() * frame_h + footer_h
-  let base_y = svg_h - footer_h
+  let anchor_y = if icicle { header_h } else { svg_h - footer_h }
 
   let out = StringBuilder()
   out.write_string(
-    "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 \{width} \{svg_h.to_int()}\" width=\"100%\" class=\"moon-pprof-svg\" data-total=\"\{root.total}\" data-unit=\"\{xml_escape(st_unit)}\">\n",
+    "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 \{width} \{svg_h.to_int()}\" width=\"100%\" class=\"moon-pprof-svg\" data-total=\"\{root.total}\" data-unit=\"\{xml_escape(st_unit)}\" data-layout=\"\{if icicle { "icicle" } else { "flame" }}\">\n",
   )
   out.write_string("<rect width=\"100%\" height=\"100%\" fill=\"#fafafa\"/>\n")
   out.write_string(
@@ -291,8 +309,9 @@ pub fn render_flamegraph_svg(
     0,
     pad_x,
     inner_w,
-    base_y,
+    anchor_y,
     frame_h,
+    icicle,
     root.total,
     st_unit,
     min_width_px,
@@ -306,7 +325,7 @@ pub fn render_flamegraph_svg(
 }
 
 ///|
-/// Render a Brendan Gregg red/blue Differential Flame Graph SVG comparing baseline vs candidate.
+/// Render a Brendan Gregg red/blue Differential Flame or Icicle Graph SVG comparing baseline vs candidate.
 pub fn render_diff_flamegraph_svg(
   baseline : Profile,
   candidate : Profile,
@@ -315,6 +334,7 @@ pub fn render_diff_flamegraph_svg(
   width~ : Int32 = 1200,
   min_width_px~ : Double = 1.5,
   normalize~ : Bool = false,
+  icicle~ : Bool = false,
   filter~ : String = "",
   spec~ : FilterSpec? = None,
 ) -> String raise PprofError {
@@ -353,19 +373,20 @@ pub fn render_diff_flamegraph_svg(
     1.0
   }
 
-  let depth = tree_depth(cand_root)
   let frame_h = 18.0
   let pad_x = 12.0
-  let header_h = 62.0
-  let footer_h = 20.0
+  let header_h = 64.0
+  let footer_h = 16.0
   let svg_w = width.to_double()
   let inner_w = svg_w - 2.0 * pad_x
+  let vis_depth = visible_tree_depth(cand_root, inner_w, min_width_px)
+  let depth = if vis_depth < 1 { 1 } else { vis_depth }
   let svg_h = header_h + depth.to_double() * frame_h + footer_h
-  let base_y = svg_h - footer_h
+  let anchor_y = if icicle { header_h } else { svg_h - footer_h }
 
   let out = StringBuilder()
   out.write_string(
-    "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 \{width} \{svg_h.to_int()}\" width=\"100%\" class=\"moon-pprof-svg\" data-total=\"\{cand_root.total}\" data-unit=\"\{xml_escape(b_unit)}\">\n",
+    "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 \{width} \{svg_h.to_int()}\" width=\"100%\" class=\"moon-pprof-svg\" data-total=\"\{cand_root.total}\" data-unit=\"\{xml_escape(b_unit)}\" data-layout=\"\{if icicle { "icicle" } else { "flame" }}\">\n",
   )
   out.write_string("<rect width=\"100%\" height=\"100%\" fill=\"#fafafa\"/>\n")
   out.write_string(
@@ -391,8 +412,9 @@ pub fn render_diff_flamegraph_svg(
     0,
     pad_x,
     inner_w,
-    base_y,
+    anchor_y,
     frame_h,
+    icicle,
     cand_root.total,
     b_unit,
     min_width_px,
@@ -455,6 +477,7 @@ pub fn render_top_html(
   sample_type~ : String = "",
   title~ : String = "MoonBit pprof Report",
   limit~ : Int32 = 25,
+  icicle~ : Bool = false,
   filter~ : String = "",
   spec~ : FilterSpec? = None,
 ) -> String raise PprofError {
@@ -466,7 +489,14 @@ pub fn render_top_html(
     filter~,
     spec~,
   )
-  let svg = render_flamegraph_svg(profile, sample_type~, title~, filter~, spec~)
+  let svg = render_flamegraph_svg(
+    profile,
+    sample_type~,
+    title~,
+    icicle~,
+    filter~,
+    spec~,
+  )
   let cg = build_callgraph(profile, sample_type~, filter~, spec~)
   let callgraph_svg = render_callgraph_svg(cg, title="\{title} (Callgraph)")
   let tbl = StringBuilder()
@@ -494,6 +524,7 @@ pub fn render_diff_html(
   title~ : String = "MoonBit pprof Differential Report",
   policy~ : GatePolicy = gate_policy(),
   limit~ : Int32 = 25,
+  icicle~ : Bool = false,
   filter~ : String = "",
   spec~ : FilterSpec? = None,
 ) -> String raise PprofError {
@@ -512,6 +543,7 @@ pub fn render_diff_html(
     sample_type~,
     title~,
     normalize=policy.normalize,
+    icicle~,
     filter~,
     spec~,
   )

@@ -399,6 +399,257 @@ pub fn from_v8_cpuprofile(json_text : String) -> Profile raise PprofError {
 }
 
 ///|
+/// Convert a Node.js (`node --heap-prof`) or Chrome DevTools V8 `.heapprofile` JSON into a canonical `Profile`.
+///
+/// Sample types emitted are `("alloc_objects", "count")` and `("alloc_space", "bytes")` (default `alloc_space`).
+/// MoonBit JS symbols (`_M0...`) are automatically demangled into readable `pkg::Type::method` names.
+pub fn from_v8_heapprofile(json_text : String) -> Profile raise PprofError {
+  let parsed = @json.parse(json_text) catch {
+    err => raise InvalidInput("invalid V8 .heapprofile JSON: \{err}")
+  }
+  guard parsed is Object(root) else {
+    raise InvalidInput("V8 .heapprofile root must be a JSON object")
+  }
+  guard root.get("head") is Some(Object(head_obj)) else {
+    raise InvalidInput("V8 .heapprofile missing 'head' call tree object")
+  }
+
+  let nodes : Map[Int32, V8NodeInfo] = Map([])
+  let parent : Map[Int32, Int32] = Map([])
+  let node_ids : Array[Int32] = []
+  let mut next_synth_id : Int32 = 100_000
+
+  fn walk_node(obj : Map[String, @json.Json], parent_id : Int32?) -> Unit {
+    let id = match json_int32_field(obj, "id") {
+      Some(v) => v
+      None => {
+        next_synth_id += 1
+        next_synth_id
+      }
+    }
+    let mut func_name = ""
+    let mut filename = ""
+    let mut line_num = 0L
+    match obj.get("callFrame") {
+      Some(Object(cf)) => {
+        func_name = json_str_field(cf, "functionName")
+        filename = json_str_field(cf, "url")
+        let ln = json_int64_field(cf, "lineNumber").unwrap_or(-1L)
+        if ln >= 0L {
+          line_num = ln + 1L
+        }
+      }
+      _ => ()
+    }
+    if func_name.is_empty() {
+      func_name = if filename.is_empty() {
+        "(anonymous)"
+      } else {
+        "(anonymous)@\{filename}"
+      }
+    } else if func_name.has_prefix("_M0") {
+      func_name = demangle_moonbit_symbol(func_name)
+    }
+    let raw_self = json_int64_field(obj, "selfSize").unwrap_or(0L)
+    let self_size = if raw_self > 0L { raw_self } else { 0L }
+    nodes[id] = { func_name, filename, line: line_num, hit_count: self_size, }
+    node_ids.push(id)
+    match parent_id {
+      Some(pid) => parent[id] = pid
+      None => ()
+    }
+    match obj.get("children") {
+      Some(Array(children)) =>
+        for ch in children {
+          match ch {
+            Object(child_obj) => walk_node(child_obj, Some(id))
+            _ => ()
+          }
+        }
+      _ => ()
+    }
+  }
+
+  walk_node(head_obj, None)
+  guard !node_ids.is_empty() else {
+    raise InvalidInput("V8 .heapprofile has empty 'head' tree")
+  }
+
+  let strings = StringInterner::new()
+  let st_alloc_objects = strings.intern("alloc_objects")
+  let st_count = strings.intern("count")
+  let st_alloc_space = strings.intern("alloc_space")
+  let st_bytes = strings.intern("bytes")
+
+  let functions : Array[Function] = []
+  let fn_keys : Map[String, UInt64] = Map([])
+  let locations : Array[Location] = []
+  let loc_keys : Map[String, UInt64] = Map([])
+
+  fn intern_loc(info : V8NodeInfo) -> UInt64 {
+    let fkey = "\{info.func_name}\u{00}\{info.filename}"
+    let fn_id = match fn_keys.get(fkey) {
+      Some(id) => id
+      None => {
+        let id = (functions.length() + 1).to_uint64()
+        let name_idx = strings.intern(info.func_name)
+        let file_idx = strings.intern(info.filename)
+        functions.push({
+          id,
+          name_idx,
+          system_name_idx: name_idx,
+          filename_idx: file_idx,
+          start_line: info.line,
+        })
+        fn_keys[fkey] = id
+        id
+      }
+    }
+    let lkey = "\{fn_id}:\{info.line}"
+    match loc_keys.get(lkey) {
+      Some(id) => id
+      None => {
+        let id = (locations.length() + 1).to_uint64()
+        locations.push({
+          id,
+          mapping_id: 0UL,
+          address: id,
+          lines: [{ function_id: fn_id, line: info.line, }],
+          is_folded: false,
+        })
+        loc_keys[lkey] = id
+        id
+      }
+    }
+  }
+
+  fn build_stack_loc_ids(leaf_id : Int32) -> Array[UInt64] {
+    let stack : Array[UInt64] = []
+    let visited : Set[Int32] = Set([])
+    let mut cur = leaf_id
+    while !visited.contains(cur) {
+      visited.add(cur)
+      match nodes.get(cur) {
+        Some(info) => {
+          let is_synthetic_root = info.func_name == "(root)" &&
+            !parent.contains(cur)
+          if !is_synthetic_root {
+            stack.push(intern_loc(info))
+          }
+        }
+        None => break
+      }
+      match parent.get(cur) {
+        Some(p) => cur = p
+        None => break
+      }
+    }
+    if stack.is_empty() {
+      match nodes.get(leaf_id) {
+        Some(info) => stack.push(intern_loc(info))
+        None => ()
+      }
+    }
+    stack
+  }
+
+  let sample_order : Array[String] = []
+  let sample_map : Map[String, Sample] = Map([])
+
+  fn record_alloc(
+    loc_ids : Array[UInt64],
+    objects : Int64,
+    bytes_v : Int64,
+  ) -> Unit {
+    if loc_ids.is_empty() || (objects <= 0L && bytes_v <= 0L) {
+      return
+    }
+    let key = loc_ids.map(id => "\{id}").join(",")
+    match sample_map.get(key) {
+      Some(existing) => {
+        existing.values[0] = existing.values[0] + objects
+        existing.values[1] = existing.values[1] + bytes_v
+      }
+      None => {
+        sample_order.push(key)
+        sample_map[key] = {
+          location_ids: loc_ids,
+          values: [objects, bytes_v],
+          labels: [],
+        }
+      }
+    }
+  }
+
+  let mut used_samples_array = false
+  match root.get("samples") {
+    Some(Array(arr)) =>
+      for el in arr {
+        match el {
+          Object(sobj) => {
+            let nid = json_int32_field(sobj, "nodeId")
+            let sz = json_int64_field(sobj, "size").unwrap_or(0L)
+            match nid {
+              Some(node_id) =>
+                if sz > 0L && nodes.contains(node_id) {
+                  let loc_ids = build_stack_loc_ids(node_id)
+                  record_alloc(loc_ids, 1L, sz)
+                  used_samples_array = true
+                }
+              None => ()
+            }
+          }
+          _ => ()
+        }
+      }
+    _ => ()
+  }
+
+  if !used_samples_array {
+    for nid in node_ids {
+      match nodes.get(nid) {
+        Some(info) =>
+          if info.hit_count > 0L {
+            let loc_ids = build_stack_loc_ids(nid)
+            record_alloc(loc_ids, 1L, info.hit_count)
+          }
+        None => ()
+      }
+    }
+  }
+
+  let out_samples : Array[Sample] = []
+  for key in sample_order {
+    match sample_map.get(key) {
+      Some(s) => out_samples.push(s)
+      None => ()
+    }
+  }
+  let comment_idx = strings.intern(
+    "converted from V8 .heapprofile by moon-pprof",
+  )
+  {
+    sample_types: [
+      { type_idx: st_alloc_objects, unit_idx: st_count, },
+      { type_idx: st_alloc_space, unit_idx: st_bytes, },
+    ],
+    samples: out_samples,
+    mappings: [],
+    locations,
+    functions,
+    string_table: strings.table,
+    drop_frames: 0L,
+    keep_frames: 0L,
+    time_nanos: 0L,
+    duration_nanos: 0L,
+    period_type: Some({ type_idx: st_alloc_space, unit_idx: st_bytes, }),
+    period: 4096L,
+    comments: [comment_idx],
+    default_sample_type: st_alloc_space,
+  }
+}
+
+///|
 fn split_last_whitespace(line : String) -> (String, String)? {
   let chars = line.to_array()
   let mut idx = chars.length() - 1
@@ -758,7 +1009,7 @@ pub fn from_perf_script(text : String) -> Profile raise PprofError {
 }
 
 ///|
-/// Detect the profiling format of raw input bytes: `"pprof-gzip"`, `"pprof-raw"`, `"v8-cpuprofile"`, `"perf-script"`, or `"folded"`.
+/// Detect the profiling format of raw input bytes: `"pprof-gzip"`, `"pprof-raw"`, `"v8-cpuprofile"`, `"v8-heapprofile"`, `"perf-script"`, or `"folded"`.
 pub fn detect_profile_format(bytes : Bytes) -> String {
   if bytes.is_empty() {
     return "unknown"
@@ -771,6 +1022,11 @@ pub fn detect_profile_format(bytes : Bytes) -> String {
     let trimmed = text.trim()
     if trimmed.has_prefix("{") && trimmed.contains("\"nodes\"") {
       return "v8-cpuprofile"
+    }
+    if trimmed.has_prefix("{") &&
+      trimmed.contains("\"head\"") &&
+      trimmed.contains("\"callFrame\"") {
+      return "v8-heapprofile"
     }
     let mut has_indented = false
     let mut has_header_colon = false
@@ -806,12 +1062,14 @@ pub fn detect_profile_format(bytes : Bytes) -> String {
 }
 
 ///|
-/// Auto-detect and decode any supported profiling format (`.pb.gz`, `.pb`, V8 `.cpuprofile`, `perf script`, or `folded`).
+/// Auto-detect and decode any supported profiling format (`.pb.gz`, `.pb`, V8 `.cpuprofile`, V8 `.heapprofile`, `perf script`, or `folded`).
 pub fn decode_any_profile(bytes : Bytes) -> Profile raise PprofError {
   match detect_profile_format(bytes) {
     "pprof-gzip" | "pprof-raw" => decode_profile(bytes)
     "v8-cpuprofile" =>
       from_v8_cpuprofile(decode_utf8_slice(bytes, 0, bytes.length()))
+    "v8-heapprofile" =>
+      from_v8_heapprofile(decode_utf8_slice(bytes, 0, bytes.length()))
     "perf-script" =>
       from_perf_script(decode_utf8_slice(bytes, 0, bytes.length()))
     "folded" => from_folded_stacks(decode_utf8_slice(bytes, 0, bytes.length()))

@@ -72,3 +72,60 @@ test "from_folded_stacks and from_perf_script parse accurately and auto-detect" 
     "string::String::Hash::hash",
   )
 }
+
+///|
+test "from_v8_heapprofile decodes allocation tree, demangles MoonBit symbols, and auto-detects" {
+  let heap_json =
+    #|{
+    #|  "head": {
+    #|    "id": 1,
+    #|    "callFrame": { "functionName": "(root)", "url": "", "lineNumber": -1 },
+    #|    "selfSize": 0,
+    #|    "children": [
+    #|      {
+    #|        "id": 2,
+    #|        "callFrame": { "functionName": "_M0MP215Sam_2dHui_2ddot12moon_2dpprof10WireReader12read__varint", "url": "moon-pprof/web.js", "lineNumber": 20 },
+    #|        "selfSize": 16384,
+    #|        "children": [
+    #|          {
+    #|            "id": 3,
+    #|            "callFrame": { "functionName": "allocBuffer", "url": "moon-pprof/web.js", "lineNumber": 55 },
+    #|            "selfSize": 8192,
+    #|            "children": []
+    #|          }
+    #|        ]
+    #|      }
+    #|    ]
+    #|  },
+    #|  "samples": [
+    #|    { "size": 4096, "nodeId": 2, "ordinal": 1 },
+    #|    { "size": 12288, "nodeId": 2, "ordinal": 2 },
+    #|    { "size": 8192, "nodeId": 3, "ordinal": 3 }
+    #|  ]
+    #|}
+  let raw_bytes = Bytes::makei(heap_json.length(), i => {
+    heap_json.code_unit_at(i).to_byte()
+  })
+  assert_eq(@moon-pprof.detect_profile_format(raw_bytes), "v8-heapprofile")
+  let profile = @moon-pprof.decode_any_profile(raw_bytes)
+  let top_space = @moon-pprof.compute_top(profile, sample_type="alloc_space")
+  assert_eq(top_space.total, 24576L)
+  assert_eq(
+    top_space.entries[0].name,
+    "Sam-Hui-dot::moon-pprof::WireReader::read_varint",
+  )
+  assert_eq(top_space.entries[0].flat, 16384L)
+  assert_eq(top_space.entries[0].cum, 24576L)
+  assert_eq(top_space.entries[1].name, "allocBuffer")
+  assert_eq(top_space.entries[1].flat, 8192L)
+
+  let top_objs = @moon-pprof.compute_top(profile, sample_type="alloc_objects")
+  assert_eq(top_objs.total, 3L)
+
+  // Verify round-trip encoding to standard gzipped profile.proto
+  let gz = @moon-pprof.encode_profile(profile, gzip=true)
+  let rt = @moon-pprof.decode_any_profile(gz)
+  let rt_top = @moon-pprof.compute_top(rt)
+  assert_eq(rt_top.sample_type, "alloc_space")
+  assert_eq(rt_top.total, 24576L)
+}

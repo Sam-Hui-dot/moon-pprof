@@ -240,7 +240,7 @@ fn write_bytes_field(
 ) -> Unit {
   write_tag(buf, field_number, 2)
   write_varint(buf, payload.length().to_uint64())
-  buf.write_bytes(payload)
+  buf.write_bytesview(payload)
 }
 
 ///|

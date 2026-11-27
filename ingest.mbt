@@ -265,7 +265,7 @@ pub fn from_v8_cpuprofile(json_text : String) -> Profile raise PprofError {
     let visited : Set[Int32] = Set([])
     let mut cur = leaf_id
     while !visited.contains(cur) {
-      visited.add(cur)
+      visited.insert(cur)
       match nodes.get(cur) {
         Some(info) => {
           // Omit synthetic V8 container "(root)" unless it is the sole frame.
@@ -528,7 +528,7 @@ pub fn from_v8_heapprofile(json_text : String) -> Profile raise PprofError {
     let visited : Set[Int32] = Set([])
     let mut cur = leaf_id
     while !visited.contains(cur) {
-      visited.add(cur)
+      visited.insert(cur)
       match nodes.get(cur) {
         Some(info) => {
           let is_synthetic_root = info.func_name == "(root)" &&

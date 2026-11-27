@@ -100,10 +100,10 @@ pub fn compare_profiles(
 
   let names : Set[String] = Set([])
   for k, _ in b_map {
-    names.add(k)
+    names.insert(k)
   }
   for k, _ in c_map {
-    names.add(k)
+    names.insert(k)
   }
 
   let all_entries : Array[DiffEntry] = []

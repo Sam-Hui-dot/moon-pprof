@@ -119,7 +119,7 @@ pub fn merge_profiles(profiles : Array[Profile]) -> Profile raise PprofError {
     for c_idx in prof.comments {
       let c_str = prof.string_at(c_idx)
       if !seen_comments.contains(c_str) {
-        seen_comments.add(c_str)
+        seen_comments.insert(c_str)
         merged_comments.push(strings.intern(c_str))
       }
     }

@@ -486,7 +486,7 @@ pub fn render_trend_svg(
     )
     let reg_set : Set[String] = Set([])
     for rl in s.regressed_at {
-      reg_set.add(rl)
+      reg_set.insert(rl)
     }
     for i, v in s.values {
       let cx = round2(x_at(i))

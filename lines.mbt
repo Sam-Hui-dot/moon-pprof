@@ -191,7 +191,7 @@ pub fn compute_line_hotspots(
       if seen.contains(key) {
         continue
       }
-      seen.add(key)
+      seen.insert(key)
       match stats.get(key) {
         Some(acc) => acc.cum += v
         None =>

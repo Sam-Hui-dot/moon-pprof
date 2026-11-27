@@ -346,7 +346,7 @@ fn aggregate_functions(
       if seen.contains(fname) {
         continue
       }
-      seen.add(fname)
+      seen.insert(fname)
       match stats.get(fname) {
         Some(acc) => acc.cum += v
         None => stats[fname] = { filename: ffile, flat: 0L, cum: v, }
@@ -453,7 +453,7 @@ pub fn group_by_label(
       if profile.string_at(lbl.key_idx) == label_key {
         let lval = label_display_value(profile, lbl)
         if !seen_vals.contains(lval) {
-          seen_vals.add(lval)
+          seen_vals.insert(lval)
           group_vals[lval] = group_vals.get(lval).unwrap_or(0L) + v
           group_counts[lval] = group_counts.get(lval).unwrap_or(0) + 1
         }

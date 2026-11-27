@@ -50,7 +50,7 @@ jobs:
           version = "0.1.0"
 
           import {
-            "Sam-Hui-dot/moon-pprof@0.5.0",
+            "Sam-Hui-dot/moon-pprof@0.5.1",
           }
           EOF
           cat > "$WS/consumer/moon.pkg" << 'EOF'
